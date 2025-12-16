@@ -1,0 +1,952 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+  xmlns:db="http://www.mulesoft.org/schema/mule/db"
+  xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+  xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+  <!-- GET /accounts - Business Logic Flow -->
+  <flow name="get-accounts-business-logic" doc:name="get-accounts-business-logic">
+    <try doc:name="Try">
+      <db:select doc:name="Select Accounts with Owners" config-ref="Database_Config">
+        <db:sql><![CDATA[SELECT 
+  a.id, a.account_number, a.account_type, a.account_name, a.currency,
+  a.balance, a.available_balance, a.status, a.opened_date, a.closed_date,
+  a.interest_rate, a.created_at, a.updated_at
+FROM accounts a
+WHERE 
+  (:customerId IS NULL OR EXISTS (
+    SELECT 1 FROM account_owners ao2 
+    WHERE ao2.account_id = a.id AND ao2.customer_id::text = :customerId
+  ))
+  AND (:accountNumber IS NULL OR a.account_number = :accountNumber)
+  AND (:accountType IS NULL OR a.account_type = :accountType)
+  AND (:status IS NULL OR a.status = :status)
+ORDER BY a.created_at DESC
+LIMIT (:limit)::integer OFFSET (:offset)::integer]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:select>
+
+      <ee:transform doc:name="Transform to Account Response">
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload map ((account) -> {
+  id: account.id,
+  accountNumber: account.account_number,
+  accountType: account.account_type,
+  accountName: account.account_name,
+  currency: account.currency,
+  balance: account.balance,
+  availableBalance: account.available_balance,
+  status: account.status,
+  openedDate: account.opened_date,
+  closedDate: account.closed_date,
+  interestRate: account.interest_rate,
+  owners: [],
+  createdAt: account.created_at,
+  updatedAt: account.updated_at
+})]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+
+      <http:response statusCode="200" doc:name="HTTP Response"/>
+      
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while querying the database",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- POST /accounts - Business Logic Flow -->
+  <flow name="create-account-business-logic" doc:name="create-account-business-logic">
+    <ee:transform doc:name="Transform Request to DB Format">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  account_number: payload.accountNumber,
+  account_type: payload.accountType,
+  account_name: payload.accountName default null,
+  currency: payload.currency default "USD",
+  balance: payload.balance default 0.00,
+  available_balance: payload.availableBalance default payload.balance default 0.00,
+  status: payload.status default 'Active',
+  opened_date: payload.openedDate default null,
+  closed_date: payload.closedDate default null,
+  interest_rate: payload.interestRate default null
+}]]></ee:set-payload>
+      </ee:message>
+      <ee:variables>
+        <ee:set-variable variableName="owners"><![CDATA[#[payload.owners default []]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+
+    <try doc:name="Try">
+      <db:insert doc:name="Insert Account" config-ref="Database_Config">
+        <db:sql><![CDATA[INSERT INTO accounts (
+  account_number, account_type, account_name, currency, balance,
+  available_balance, status, opened_date, closed_date, interest_rate,
+  created_at, updated_at
+) VALUES (
+  :account_number, :account_type, :account_name, :currency, :balance,
+  :available_balance, :status, :opened_date, :closed_date, :interest_rate,
+  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+RETURNING id, account_number, account_type, account_name, currency,
+  balance, available_balance, status, opened_date, closed_date, interest_rate,
+  created_at, updated_at]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:insert>
+
+      <ee:transform doc:name="Store Account ID">
+        <ee:variables>
+          <ee:set-variable variableName="accountId"><![CDATA[#[payload[0].id]]]></ee:set-variable>
+          <ee:set-variable variableName="account"><![CDATA[#[payload[0]]]></ee:set-variable>
+        </ee:variables>
+      </ee:transform>
+
+      <foreach doc:name="Insert Account Owners">
+        <db:insert config-ref="Database_Config">
+          <db:sql><![CDATA[INSERT INTO account_owners (account_id, customer_id, relationship_type)
+VALUES (:accountId, :customerId::uuid, :relationshipType)
+ON CONFLICT (account_id, customer_id) DO NOTHING]]></db:sql>
+          <db:input-parameters><![CDATA[#[{
+  accountId: vars.accountId,
+  customerId: payload.customerId,
+  relationshipType: payload.relationshipType default 'Primary'
+}]]]></db:input-parameters>
+        </db:insert>
+      </foreach>
+
+      <db:select doc:name="Get Owners" config-ref="Database_Config">
+        <db:sql><![CDATA[SELECT customer_id, relationship_type
+FROM account_owners
+WHERE account_id = :accountId]]></db:sql>
+        <db:input-parameters><![CDATA[#[{accountId: vars.accountId}]]]></db:input-parameters>
+      </db:select>
+
+      <ee:transform doc:name="Transform Response">
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var account = vars.account
+var owners = payload
+---
+{
+  id: account.id,
+  accountNumber: account.account_number,
+  accountType: account.account_type,
+  accountName: account.account_name,
+  currency: account.currency,
+  balance: account.balance,
+  availableBalance: account.available_balance,
+  status: account.status,
+  openedDate: account.opened_date,
+  closedDate: account.closed_date,
+  interestRate: account.interest_rate,
+  owners: owners map ((owner) -> {
+    customerId: owner.customer_id,
+    relationshipType: owner.relationship_type
+  }),
+  createdAt: account.created_at,
+  updatedAt: account.updated_at
+}]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+
+      <http:response statusCode="201" doc:name="HTTP Response"/>
+      
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while creating the account",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- GET /accounts/{accountId} - Business Logic Flow -->
+  <flow name="get-account-by-id-business-logic" doc:name="get-account-by-id-business-logic">
+    <try doc:name="Try">
+      <db:select doc:name="Select Account by ID" config-ref="Database_Config">
+        <db:sql><![CDATA[SELECT 
+  id, account_number, account_type, account_name, currency,
+  balance, available_balance, status, opened_date, closed_date,
+  interest_rate, created_at, updated_at
+FROM accounts
+WHERE id = :accountId]]></db:sql>
+        <db:input-parameters><![CDATA[#[{accountId: vars.accountId}]]]></db:input-parameters>
+      </db:select>
+
+      <choice doc:name="Account Found?">
+        <when expression="#[sizeOf(payload) > 0]">
+          <ee:transform doc:name="Store Account">
+            <ee:variables>
+              <ee:set-variable variableName="account"><![CDATA[#[payload[0]]]></ee:set-variable>
+            </ee:variables>
+          </ee:transform>
+
+          <db:select doc:name="Get Owners" config-ref="Database_Config">
+            <db:sql><![CDATA[SELECT customer_id, relationship_type
+FROM account_owners
+WHERE account_id = :accountId]]></db:sql>
+            <db:input-parameters><![CDATA[#[{accountId: vars.account.id}]]]></db:input-parameters>
+          </db:select>
+
+          <ee:transform doc:name="Transform Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var account = vars.account
+var owners = payload
+---
+{
+  id: account.id,
+  accountNumber: account.account_number,
+  accountType: account.account_type,
+  accountName: account.account_name,
+  currency: account.currency,
+  balance: account.balance,
+  availableBalance: account.available_balance,
+  status: account.status,
+  openedDate: account.opened_date,
+  closedDate: account.closed_date,
+  interestRate: account.interest_rate,
+  owners: owners map ((owner) -> {
+    customerId: owner.customer_id,
+    relationshipType: owner.relationship_type
+  }),
+  createdAt: account.created_at,
+  updatedAt: account.updated_at
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="200" doc:name="HTTP Response"/>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_FOUND",
+    message: "Account not found",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="404" doc:name="HTTP Response"/>
+        </otherwise>
+      </choice>
+      
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while querying the database",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- PUT /accounts/{accountId} - Business Logic Flow -->
+  <flow name="update-account-business-logic" doc:name="update-account-business-logic">
+    <ee:transform doc:name="Transform Request to DB Format">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  accountId: vars.accountId,
+  account_number: payload.accountNumber default null,
+  account_type: payload.accountType default null,
+  account_name: payload.accountName default null,
+  currency: payload.currency default null,
+  balance: payload.balance default null,
+  available_balance: payload.availableBalance default null,
+  status: payload.status default null,
+  opened_date: payload.openedDate default null,
+  closed_date: payload.closedDate default null,
+  interest_rate: payload.interestRate default null
+}]]></ee:set-payload>
+      </ee:message>
+      <ee:variables>
+        <ee:set-variable variableName="owners"><![CDATA[#[payload.owners default null]]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+
+    <try doc:name="Try">
+      <db:update doc:name="Update Account" config-ref="Database_Config">
+        <db:sql><![CDATA[UPDATE accounts SET
+  account_number = COALESCE(:account_number, account_number),
+  account_type = COALESCE(:account_type, account_type),
+  account_name = COALESCE(:account_name, account_name),
+  currency = COALESCE(:currency, currency),
+  balance = COALESCE(:balance, balance),
+  available_balance = COALESCE(:available_balance, available_balance),
+  status = COALESCE(:status, status),
+  opened_date = COALESCE(:opened_date, opened_date),
+  closed_date = COALESCE(:closed_date, closed_date),
+  interest_rate = COALESCE(:interest_rate, interest_rate),
+  updated_at = CURRENT_TIMESTAMP
+WHERE id = :accountId
+RETURNING id, account_number, account_type, account_name, currency,
+  balance, available_balance, status, opened_date, closed_date, interest_rate,
+  created_at, updated_at]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:update>
+
+      <choice doc:name="Update Successful?">
+        <when expression="#[sizeOf(payload) > 0]">
+          <ee:transform doc:name="Store Account ID">
+            <ee:variables>
+              <ee:set-variable variableName="accountId"><![CDATA[#[payload[0].id]]]></ee:set-variable>
+              <ee:set-variable variableName="updatedAccount"><![CDATA[#[payload[0]]]></ee:set-variable>
+            </ee:variables>
+          </ee:transform>
+          
+          <choice doc:name="Update Owners?">
+            <when expression="#[vars.owners != null]">
+              <db:delete doc:name="Delete Old Owners" config-ref="Database_Config">
+                <db:sql><![CDATA[DELETE FROM account_owners WHERE account_id = :accountId]]></db:sql>
+                <db:input-parameters><![CDATA[#[{accountId: vars.accountId}]]]></db:input-parameters>
+              </db:delete>
+              
+              <foreach doc:name="Insert New Owners">
+                <db:insert config-ref="Database_Config">
+                  <db:sql><![CDATA[INSERT INTO account_owners (account_id, customer_id, relationship_type)
+VALUES (:accountId, :customerId::uuid, :relationshipType)]]></db:sql>
+                  <db:input-parameters><![CDATA[#[{
+                    accountId: vars.accountId,
+                    customerId: payload.customerId,
+                    relationshipType: payload.relationshipType default 'Primary'
+                  }]]]></db:input-parameters>
+                </db:insert>
+              </foreach>
+            </when>
+          </choice>
+          
+          <db:select doc:name="Get Owners" config-ref="Database_Config">
+            <db:sql><![CDATA[SELECT customer_id, relationship_type
+FROM account_owners
+WHERE account_id = :accountId]]></db:sql>
+            <db:input-parameters><![CDATA[#[{accountId: vars.accountId}]]]></db:input-parameters>
+          </db:select>
+          
+          <ee:transform doc:name="Transform Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var account = vars.updatedAccount
+var owners = payload
+---
+{
+  id: account.id,
+  accountNumber: account.account_number,
+  accountType: account.account_type,
+  accountName: account.account_name,
+  currency: account.currency,
+  balance: account.balance,
+  availableBalance: account.available_balance,
+  status: account.status,
+  openedDate: account.opened_date,
+  closedDate: account.closed_date,
+  interestRate: account.interest_rate,
+  owners: owners map ((owner) -> {
+    customerId: owner.customer_id,
+    relationshipType: owner.relationship_type
+  }),
+  createdAt: account.created_at,
+  updatedAt: account.updated_at
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="200" doc:name="HTTP Response"/>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_FOUND",
+    message: "Account not found",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="404" doc:name="HTTP Response"/>
+        </otherwise>
+      </choice>
+      
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while updating the account",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- GET /accounts/{accountId}/transactions - Business Logic Flow -->
+  <flow name="get-account-transactions-business-logic" doc:name="get-account-transactions-business-logic">
+    <ee:transform doc:name="Build Query Parameters">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  accountId: vars.accountId,
+  startDate: attributes.queryParams.startDate default null,
+  endDate: attributes.queryParams.endDate default null,
+  transactionType: attributes.queryParams.transactionType default null,
+  status: attributes.queryParams.status default null,
+  limit: (attributes.queryParams.limit as Number default 100) as String,
+  offset: (attributes.queryParams.offset as Number default 0) as String
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+
+    <try doc:name="Try">
+      <db:select doc:name="Select Transactions" config-ref="Database_Config">
+        <db:sql><![CDATA[SELECT 
+  id, transaction_number, account_id, transaction_type, amount, currency,
+  transaction_date, value_date, description, merchant_name, category,
+  check_number, reference_number, related_account_id, status,
+  dispute_status, dispute_reason, created_at, updated_at
+FROM transactions
+WHERE account_id = :accountId
+  AND (:startDate IS NULL OR transaction_date::date >= :startDate::date)
+  AND (:endDate IS NULL OR transaction_date::date <= :endDate::date)
+  AND (:transactionType IS NULL OR transaction_type = :transactionType)
+  AND (:status IS NULL OR status = :status)
+ORDER BY transaction_date DESC
+LIMIT (:limit)::integer OFFSET (:offset)::integer]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:select>
+
+      <ee:transform doc:name="Transform Response">
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload map ((txn) -> {
+  id: txn.id,
+  transactionNumber: txn.transaction_number,
+  accountId: txn.account_id,
+  transactionType: txn.transaction_type,
+  amount: txn.amount,
+  currency: txn.currency,
+  transactionDate: txn.transaction_date,
+  valueDate: txn.value_date,
+  description: txn.description,
+  merchantName: txn.merchant_name,
+  category: txn.category,
+  checkNumber: txn.check_number,
+  referenceNumber: txn.reference_number,
+  relatedAccountId: txn.related_account_id,
+  status: txn.status,
+  disputeStatus: txn.dispute_status,
+  disputeReason: txn.dispute_reason,
+  createdAt: txn.created_at,
+  updatedAt: txn.updated_at
+})]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+
+      <http:response statusCode="200" doc:name="HTTP Response"/>
+      
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while querying transactions",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- POST /accounts/{accountId}/transactions - Business Logic Flow -->
+  <flow name="create-transaction-business-logic" doc:name="create-transaction-business-logic">
+    <ee:transform doc:name="Transform Request to DB Format">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  account_id: vars.accountId,
+  transaction_number: payload.transactionNumber,
+  transaction_type: payload.transactionType,
+  amount: payload.amount,
+  currency: payload.currency default "USD",
+  transaction_date: payload.transactionDate default now(),
+  value_date: payload.valueDate default null,
+  description: payload.description default null,
+  merchant_name: payload.merchantName default null,
+  category: payload.category default null,
+  check_number: payload.checkNumber default null,
+  reference_number: payload.referenceNumber default null,
+  related_account_id: payload.relatedAccountId default null,
+  status: payload.status default 'Posted',
+  dispute_status: payload.disputeStatus default 'None',
+  dispute_reason: payload.disputeReason default null
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+
+    <try doc:name="Try">
+      <db:insert doc:name="Insert Transaction" config-ref="Database_Config">
+        <db:sql><![CDATA[INSERT INTO transactions (
+  transaction_number, account_id, transaction_type, amount, currency,
+  transaction_date, value_date, description, merchant_name, category,
+  check_number, reference_number, related_account_id, status,
+  dispute_status, dispute_reason, created_at, updated_at
+) VALUES (
+  :transaction_number, :account_id, :transaction_type, :amount, :currency,
+  :transaction_date, :value_date, :description, :merchant_name, :category,
+  :check_number, :reference_number, :related_account_id, :status,
+  :dispute_status, :dispute_reason, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+RETURNING id, transaction_number, account_id, transaction_type, amount, currency,
+  transaction_date, value_date, description, merchant_name, category,
+  check_number, reference_number, related_account_id, status,
+  dispute_status, dispute_reason, created_at, updated_at]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:insert>
+
+      <ee:transform doc:name="Transform Response">
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var txn = payload[0]
+---
+{
+  id: txn.id,
+  transactionNumber: txn.transaction_number,
+  accountId: txn.account_id,
+  transactionType: txn.transaction_type,
+  amount: txn.amount,
+  currency: txn.currency,
+  transactionDate: txn.transaction_date,
+  valueDate: txn.value_date,
+  description: txn.description,
+  merchantName: txn.merchant_name,
+  category: txn.category,
+  checkNumber: txn.check_number,
+  referenceNumber: txn.reference_number,
+  relatedAccountId: txn.related_account_id,
+  status: txn.status,
+  disputeStatus: txn.dispute_status,
+  disputeReason: txn.dispute_reason,
+  createdAt: txn.created_at,
+  updatedAt: txn.updated_at
+}]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+
+      <http:response statusCode="201" doc:name="HTTP Response"/>
+      
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while creating the transaction",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- GET /transactions/{transactionId} - Business Logic Flow -->
+  <flow name="get-transaction-by-id-business-logic" doc:name="get-transaction-by-id-business-logic">
+    <try doc:name="Try">
+      <db:select doc:name="Select Transaction by ID" config-ref="Database_Config">
+        <db:sql><![CDATA[SELECT 
+  id, transaction_number, account_id, transaction_type, amount, currency,
+  transaction_date, value_date, description, merchant_name, category,
+  check_number, reference_number, related_account_id, status,
+  dispute_status, dispute_reason, created_at, updated_at
+FROM transactions
+WHERE id = :transactionId]]></db:sql>
+        <db:input-parameters><![CDATA[#[{transactionId: vars.transactionId}]]]></db:input-parameters>
+      </db:select>
+      <choice doc:name="Transaction Found?">
+        <when expression="#[sizeOf(payload) > 0]">
+          <ee:transform doc:name="Transform Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var txn = payload[0]
+---
+{
+  id: txn.id,
+  transactionNumber: txn.transaction_number,
+  accountId: txn.account_id,
+  transactionType: txn.transaction_type,
+  amount: txn.amount,
+  currency: txn.currency,
+  transactionDate: txn.transaction_date,
+  valueDate: txn.value_date,
+  description: txn.description,
+  merchantName: txn.merchant_name,
+  category: txn.category,
+  checkNumber: txn.check_number,
+  referenceNumber: txn.reference_number,
+  relatedAccountId: txn.related_account_id,
+  status: txn.status,
+  disputeStatus: txn.dispute_status,
+  disputeReason: txn.dispute_reason,
+  createdAt: txn.created_at,
+  updatedAt: txn.updated_at
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="200" doc:name="HTTP Response"/>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_FOUND",
+    message: "Transaction not found",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="404" doc:name="HTTP Response"/>
+        </otherwise>
+      </choice>
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while querying the database",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- PUT /transactions/{transactionId} - Business Logic Flow -->
+  <flow name="update-transaction-business-logic" doc:name="update-transaction-business-logic">
+    <ee:transform doc:name="Transform Request to DB Format">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  transactionId: vars.transactionId,
+  transaction_number: payload.transactionNumber default null,
+  transaction_type: payload.transactionType default null,
+  amount: payload.amount default null,
+  currency: payload.currency default null,
+  transaction_date: payload.transactionDate default null,
+  value_date: payload.valueDate default null,
+  description: payload.description default null,
+  merchant_name: payload.merchantName default null,
+  category: payload.category default null,
+  check_number: payload.checkNumber default null,
+  reference_number: payload.referenceNumber default null,
+  related_account_id: payload.relatedAccountId default null,
+  status: payload.status default null,
+  dispute_status: payload.disputeStatus default null,
+  dispute_reason: payload.disputeReason default null
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <try doc:name="Try">
+      <db:update doc:name="Update Transaction" config-ref="Database_Config">
+        <db:sql><![CDATA[UPDATE transactions SET
+  transaction_number = COALESCE(:transaction_number, transaction_number),
+  transaction_type = COALESCE(:transaction_type, transaction_type),
+  amount = COALESCE(:amount, amount),
+  currency = COALESCE(:currency, currency),
+  transaction_date = COALESCE(:transaction_date, transaction_date),
+  value_date = COALESCE(:value_date, value_date),
+  description = COALESCE(:description, description),
+  merchant_name = COALESCE(:merchant_name, merchant_name),
+  category = COALESCE(:category, category),
+  check_number = COALESCE(:check_number, check_number),
+  reference_number = COALESCE(:reference_number, reference_number),
+  related_account_id = COALESCE(:related_account_id, related_account_id),
+  status = COALESCE(:status, status),
+  dispute_status = COALESCE(:dispute_status, dispute_status),
+  dispute_reason = COALESCE(:dispute_reason, dispute_reason),
+  updated_at = CURRENT_TIMESTAMP
+WHERE id = :transactionId
+RETURNING id, transaction_number, account_id, transaction_type, amount, currency,
+  transaction_date, value_date, description, merchant_name, category,
+  check_number, reference_number, related_account_id, status,
+  dispute_status, dispute_reason, created_at, updated_at]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:update>
+      <choice doc:name="Update Successful?">
+        <when expression="#[sizeOf(payload) > 0]">
+          <ee:transform doc:name="Transform Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var txn = payload[0]
+---
+{
+  id: txn.id,
+  transactionNumber: txn.transaction_number,
+  accountId: txn.account_id,
+  transactionType: txn.transaction_type,
+  amount: txn.amount,
+  currency: txn.currency,
+  transactionDate: txn.transaction_date,
+  valueDate: txn.value_date,
+  description: txn.description,
+  merchantName: txn.merchant_name,
+  category: txn.category,
+  checkNumber: txn.check_number,
+  referenceNumber: txn.reference_number,
+  relatedAccountId: txn.related_account_id,
+  status: txn.status,
+  disputeStatus: txn.dispute_status,
+  disputeReason: txn.dispute_reason,
+  createdAt: txn.created_at,
+  updatedAt: txn.updated_at
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="200" doc:name="HTTP Response"/>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_FOUND",
+    message: "Transaction not found",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="404" doc:name="HTTP Response"/>
+        </otherwise>
+      </choice>
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while updating the transaction",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <!-- POST /transactions/{transactionId}/dispute - Business Logic Flow -->
+  <flow name="create-dispute-business-logic" doc:name="create-dispute-business-logic">
+    <try doc:name="Try">
+      <db:update doc:name="Create Dispute" config-ref="Database_Config">
+        <db:sql><![CDATA[UPDATE transactions SET
+  dispute_status = 'Pending',
+  dispute_reason = :disputeReason,
+  updated_at = CURRENT_TIMESTAMP
+WHERE id = :transactionId
+RETURNING id, transaction_number, account_id, transaction_type, amount, currency,
+  transaction_date, value_date, description, merchant_name, category,
+  check_number, reference_number, related_account_id, status,
+  dispute_status, dispute_reason, created_at, updated_at]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+  transactionId: vars.transactionId,
+  disputeReason: payload.disputeReason
+}]]]></db:input-parameters>
+      </db:update>
+      <choice doc:name="Dispute Created?">
+        <when expression="#[sizeOf(payload) > 0]">
+          <ee:transform doc:name="Transform Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var txn = payload[0]
+---
+{
+  id: txn.id,
+  transactionNumber: txn.transaction_number,
+  accountId: txn.account_id,
+  transactionType: txn.transaction_type,
+  amount: txn.amount,
+  currency: txn.currency,
+  transactionDate: txn.transaction_date,
+  valueDate: txn.value_date,
+  description: txn.description,
+  merchantName: txn.merchant_name,
+  category: txn.category,
+  checkNumber: txn.check_number,
+  referenceNumber: txn.reference_number,
+  relatedAccountId: txn.related_account_id,
+  status: txn.status,
+  disputeStatus: txn.dispute_status,
+  disputeReason: txn.dispute_reason,
+  createdAt: txn.created_at,
+  updatedAt: txn.updated_at
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="200" doc:name="HTTP Response"/>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_FOUND",
+    message: "Transaction not found",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="404" doc:name="HTTP Response"/>
+        </otherwise>
+      </choice>
+      <error-handler>
+        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+          <ee:transform doc:name="Transform Error">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "DATABASE_ERROR",
+    message: "An error occurred while creating the dispute",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <http:response statusCode="500" doc:name="HTTP Response"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+</mule>

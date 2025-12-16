@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+      http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
+      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+  <!-- APIkit Router Configuration -->
+  <apikit:config name="core-banking-accounts-system-api-config" 
+                  raml="core-banking-accounts-system-api.raml" 
+                  outboundHeadersMapName="outboundHeaders" 
+                  httpStatusVarName="httpStatus"/>
+
+  <!-- Main HTTP Listener with APIkit Router -->
+  <flow name="main">
+    <http:listener config-ref="HTTP_Listener_config" path="/api/*" doc:name="HTTP Listener"/>
+    <apikit:router config-ref="core-banking-accounts-system-api-config" doc:name="APIkit Router"/>
+    <error-handler>
+      <on-error-propagate type="APIKIT:NOT_FOUND" enableNotifications="true" logException="true" doc:name="On Error Propagate">
+        <ee:transform doc:name="Transform Error Response">
+          <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_FOUND",
+    message: "Resource not found",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+          </ee:message>
+        </ee:transform>
+        <http:response statusCode="404" doc:name="HTTP Response"/>
+      </on-error-propagate>
+      <on-error-propagate type="APIKIT:BAD_REQUEST" enableNotifications="true" logException="true" doc:name="On Error Propagate">
+        <ee:transform doc:name="Transform Error Response">
+          <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "BAD_REQUEST",
+    message: error.description default "Bad request",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+          </ee:message>
+        </ee:transform>
+        <http:response statusCode="400" doc:name="HTTP Response"/>
+      </on-error-propagate>
+      <on-error-propagate type="APIKIT:NOT_ACCEPTABLE" enableNotifications="true" logException="true" doc:name="On Error Propagate">
+        <ee:transform doc:name="Transform Error Response">
+          <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "NOT_ACCEPTABLE",
+    message: "Content type not acceptable",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+          </ee:message>
+        </ee:transform>
+        <http:response statusCode="406" doc:name="HTTP Response"/>
+      </on-error-propagate>
+      <on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE" enableNotifications="true" logException="true" doc:name="On Error Propagate">
+        <ee:transform doc:name="Transform Error Response">
+          <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "UNSUPPORTED_MEDIA_TYPE",
+    message: "Unsupported media type",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+          </ee:message>
+        </ee:transform>
+        <http:response statusCode="415" doc:name="HTTP Response"/>
+      </on-error-propagate>
+      <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED" enableNotifications="true" logException="true" doc:name="On Error Propagate">
+        <ee:transform doc:name="Transform Error Response">
+          <ee:message>
+            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "METHOD_NOT_ALLOWED",
+    message: "Method not allowed",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+          </ee:message>
+        </ee:transform>
+        <http:response statusCode="405" doc:name="HTTP Response"/>
+      </on-error-propagate>
+    </error-handler>
+  </flow>
+
+  <!-- GET /accounts -->
+  <flow name="get:\accounts:core-banking-accounts-system-api-config">
+    <ee:transform doc:name="Build Query Parameters">
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+  customerId: attributes.queryParams.customerId default null,
+  accountNumber: attributes.queryParams.accountNumber default null,
+  accountType: attributes.queryParams.accountType default null,
+  status: attributes.queryParams.status default null,
+  limit: (attributes.queryParams.limit as Number default 100) as String,
+  offset: (attributes.queryParams.offset as Number default 0) as String
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <flow-ref name="get-accounts-business-logic" doc:name="get-accounts-business-logic"/>
+  </flow>
+
+  <!-- POST /accounts -->
+  <flow name="post:\accounts:core-banking-accounts-system-api-config">
+    <flow-ref name="create-account-business-logic" doc:name="create-account-business-logic"/>
+  </flow>
+
+  <!-- GET /accounts/{accountId} -->
+  <flow name="get:\accounts\{accountId}:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
+    <flow-ref name="get-account-by-id-business-logic" doc:name="get-account-by-id-business-logic"/>
+  </flow>
+
+  <!-- PUT /accounts/{accountId} -->
+  <flow name="put:\accounts\{accountId}:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
+    <flow-ref name="update-account-business-logic" doc:name="update-account-business-logic"/>
+  </flow>
+
+  <!-- GET /accounts/{accountId}/transactions -->
+  <flow name="get:\accounts\{accountId}\transactions:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
+    <flow-ref name="get-account-transactions-business-logic" doc:name="get-account-transactions-business-logic"/>
+  </flow>
+
+  <!-- POST /accounts/{accountId}/transactions -->
+  <flow name="post:\accounts\{accountId}\transactions:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
+    <flow-ref name="create-transaction-business-logic" doc:name="create-transaction-business-logic"/>
+  </flow>
+
+  <!-- GET /transactions/{transactionId} -->
+  <flow name="get:\transactions\{transactionId}:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.transactionId]" variableName="transactionId" doc:name="Set Transaction ID"/>
+    <flow-ref name="get-transaction-by-id-business-logic" doc:name="get-transaction-by-id-business-logic"/>
+  </flow>
+
+  <!-- PUT /transactions/{transactionId} -->
+  <flow name="put:\transactions\{transactionId}:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.transactionId]" variableName="transactionId" doc:name="Set Transaction ID"/>
+    <flow-ref name="update-transaction-business-logic" doc:name="update-transaction-business-logic"/>
+  </flow>
+
+  <!-- POST /transactions/{transactionId}/dispute -->
+  <flow name="post:\transactions\{transactionId}\dispute:core-banking-accounts-system-api-config">
+    <set-variable value="#[attributes.uriParams.transactionId]" variableName="transactionId" doc:name="Set Transaction ID"/>
+    <flow-ref name="create-dispute-business-logic" doc:name="create-dispute-business-logic"/>
+  </flow>
+
+</mule>
+

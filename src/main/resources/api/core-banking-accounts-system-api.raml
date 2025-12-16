@@ -1,0 +1,198 @@
+#%RAML 1.0
+title: Core Banking Accounts System API
+version: 1.0.0
+baseUri: http://localhost:8081/api/accounts
+mediaType: application/json
+
+documentation:
+  - title: Overview
+    content: API système pour gérer les comptes bancaires dans le système Core Banking
+
+types:
+  FinancialAccount:
+    type: object
+    properties:
+      id?: string
+      accountNumber: string
+      accountType: string
+      accountName?: string
+      currency?: string
+      balance?: number
+      availableBalance?: number
+      owners:
+        type: array
+        items:
+          type: object
+          properties:
+            customerId: string
+            relationshipType: string
+      status?: string
+  FinancialTransaction:
+    type: object
+    properties:
+      id?: string
+      transactionNumber: string
+      accountId: string
+      transactionType: string
+      amount: number
+      currency?: string
+      transactionDate: datetime
+      description?: string
+      status?: string
+  ErrorResponse:
+    type: object
+    properties:
+      error:
+        type: object
+        properties:
+          code: string
+          message: string
+
+traits:
+  hasQueryParam:
+    queryParameters:
+      limit:
+        type: integer
+        required: false
+        default: 100
+      offset:
+        type: integer
+        required: false
+        default: 0
+
+/accounts:
+  displayName: Accounts
+  description: Opérations sur les comptes bancaires
+  
+  get:
+    displayName: Get Accounts
+    description: Récupère la liste des comptes avec filtres optionnels
+    is: [hasQueryParam]
+    queryParameters:
+      customerId:
+        type: string
+        required: false
+      accountNumber:
+        type: string
+        required: false
+      accountType:
+        type: string
+        required: false
+      status:
+        type: string
+        required: false
+    responses:
+      200:
+        body:
+          application/json:
+            type: FinancialAccount[]
+      400:
+        body:
+          application/json:
+            type: ErrorResponse
+      500:
+        body:
+          application/json:
+            type: ErrorResponse
+
+  post:
+    displayName: Create Account
+    description: Crée un nouveau compte
+    body:
+      application/json:
+        type: FinancialAccount
+    responses:
+      201:
+        body:
+          application/json:
+            type: FinancialAccount
+      400:
+        body:
+          application/json:
+            type: ErrorResponse
+
+  /{accountId}:
+    displayName: Account by ID
+    uriParameters:
+      accountId:
+        type: string
+    
+    get:
+      displayName: Get Account by ID
+      responses:
+        200:
+          body:
+            application/json:
+              type: FinancialAccount
+        404:
+          body:
+            application/json:
+              type: ErrorResponse
+    
+    put:
+      displayName: Update Account
+      body:
+        application/json:
+          type: FinancialAccount
+      responses:
+        200:
+          body:
+            application/json:
+              type: FinancialAccount
+
+    /transactions:
+      displayName: Account Transactions
+      get:
+        displayName: Get Account Transactions
+        responses:
+          200:
+            body:
+              application/json:
+                type: FinancialTransaction[]
+      post:
+        displayName: Create Transaction
+        body:
+          application/json:
+            type: FinancialTransaction
+        responses:
+          201:
+            body:
+              application/json:
+                type: FinancialTransaction
+
+/transactions/{transactionId}:
+  displayName: Transaction by ID
+  uriParameters:
+    transactionId:
+      type: string
+  get:
+    displayName: Get Transaction by ID
+    responses:
+      200:
+        body:
+          application/json:
+            type: FinancialTransaction
+  put:
+    displayName: Update Transaction
+    body:
+      application/json:
+        type: FinancialTransaction
+    responses:
+      200:
+        body:
+          application/json:
+            type: FinancialTransaction
+  /dispute:
+    displayName: Dispute Transaction
+    post:
+      displayName: Create Dispute
+      body:
+        application/json:
+          type: object
+          properties:
+            disputeReason: string
+      responses:
+        200:
+          body:
+            application/json:
+              type: FinancialTransaction
