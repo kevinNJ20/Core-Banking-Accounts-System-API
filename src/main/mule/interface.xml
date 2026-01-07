@@ -8,7 +8,8 @@
       xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
       http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
       http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
-      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+      http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
 
   <!-- APIkit Router Configuration -->
   <apikit:config name="core-banking-accounts-system-api-config" 
@@ -19,8 +20,8 @@
   <!-- Main HTTP Listener with APIkit Router -->
   <flow name="main">
     <http:listener config-ref="HTTP_Listener_config" path="/api/*" doc:name="HTTP Listener"/>
-    <apikit:router config-ref="core-banking-accounts-system-api-config" doc:name="APIkit Router"/>
-    <error-handler>
+    <apikit:router doc:name="APIkit Router" doc:id="733fa810-6de1-4495-9f0d-9ced3afa72ad" config-ref="core-banking-accounts-system-api-config"/>
+		<error-handler>
       <on-error-propagate type="APIKIT:NOT_FOUND" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
           <ee:message>
@@ -36,7 +37,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-        <http:response statusCode="404" doc:name="HTTP Response"/>
+        <set-variable value="404" doc:name="httpStatus" doc:id="7742ce27-0c13-498f-bb89-9634d5eac600" variableName="httpStatus"/>
       </on-error-propagate>
       <on-error-propagate type="APIKIT:BAD_REQUEST" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -53,7 +54,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-        <http:response statusCode="400" doc:name="HTTP Response"/>
+				<set-variable value="400" doc:name="httpStatus" doc:id="2372911f-3e13-4c17-9508-e14942a87cd5" variableName="httpStatus" />
       </on-error-propagate>
       <on-error-propagate type="APIKIT:NOT_ACCEPTABLE" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -70,7 +71,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-        <http:response statusCode="406" doc:name="HTTP Response"/>
+				<set-variable value="406" doc:name="httpStatus" doc:id="82f13ab1-e581-4f7d-9516-6e75e6221361" variableName="httpStatus" />
       </on-error-propagate>
       <on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -87,7 +88,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-        <http:response statusCode="415" doc:name="HTTP Response"/>
+				<set-variable value="415" doc:name="httpStatus" doc:id="1a9cd1c3-ea44-4db4-93e1-62dd8bc1de69" variableName="httpStatus" />
       </on-error-propagate>
       <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -104,7 +105,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-        <http:response statusCode="405" doc:name="HTTP Response"/>
+				<set-variable value="405" doc:name="httpStatus" doc:id="ec8c94c3-dda6-46c8-89a1-516361aa4468" variableName="httpStatus" />
       </on-error-propagate>
     </error-handler>
   </flow>
@@ -135,43 +136,43 @@ output application/java
   </flow>
 
   <!-- GET /accounts/{accountId} -->
-  <flow name="get:\accounts\{accountId}:core-banking-accounts-system-api-config">
+  <flow name="get:\accounts\(accountId):core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
     <flow-ref name="get-account-by-id-business-logic" doc:name="get-account-by-id-business-logic"/>
   </flow>
 
   <!-- PUT /accounts/{accountId} -->
-  <flow name="put:\accounts\{accountId}:core-banking-accounts-system-api-config">
+  <flow name="put:\accounts\(accountId):core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
     <flow-ref name="update-account-business-logic" doc:name="update-account-business-logic"/>
   </flow>
 
   <!-- GET /accounts/{accountId}/transactions -->
-  <flow name="get:\accounts\{accountId}\transactions:core-banking-accounts-system-api-config">
+  <flow name="get:\accounts\(accountId)\transactions:core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
     <flow-ref name="get-account-transactions-business-logic" doc:name="get-account-transactions-business-logic"/>
   </flow>
 
   <!-- POST /accounts/{accountId}/transactions -->
-  <flow name="post:\accounts\{accountId}\transactions:core-banking-accounts-system-api-config">
+  <flow name="post:\accounts\(accountId)\transactions:core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID"/>
     <flow-ref name="create-transaction-business-logic" doc:name="create-transaction-business-logic"/>
   </flow>
 
   <!-- GET /transactions/{transactionId} -->
-  <flow name="get:\transactions\{transactionId}:core-banking-accounts-system-api-config">
+  <flow name="get:\transactions\(transactionId):core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.transactionId]" variableName="transactionId" doc:name="Set Transaction ID"/>
     <flow-ref name="get-transaction-by-id-business-logic" doc:name="get-transaction-by-id-business-logic"/>
   </flow>
 
   <!-- PUT /transactions/{transactionId} -->
-  <flow name="put:\transactions\{transactionId}:core-banking-accounts-system-api-config">
+  <flow name="put:\transactions\(transactionId):core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.transactionId]" variableName="transactionId" doc:name="Set Transaction ID"/>
     <flow-ref name="update-transaction-business-logic" doc:name="update-transaction-business-logic"/>
   </flow>
 
   <!-- POST /transactions/{transactionId}/dispute -->
-  <flow name="post:\transactions\{transactionId}\dispute:core-banking-accounts-system-api-config">
+  <flow name="post:\transactions\(transactionId)\dispute:core-banking-accounts-system-api-config">
     <set-variable value="#[attributes.uriParams.transactionId]" variableName="transactionId" doc:name="Set Transaction ID"/>
     <flow-ref name="create-dispute-business-logic" doc:name="create-dispute-business-logic"/>
   </flow>
