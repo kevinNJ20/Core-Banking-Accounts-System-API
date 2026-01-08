@@ -12,15 +12,11 @@
 http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
 
   <!-- APIkit Router Configuration -->
-  <apikit:config name="core-banking-accounts-system-api-config" 
-                  raml="core-banking-accounts-system-api.raml" 
-                  outboundHeadersMapName="outboundHeaders" 
-                  httpStatusVarName="httpStatus"/>
 
   <!-- Main HTTP Listener with APIkit Router -->
   <flow name="main">
     <http:listener config-ref="HTTP_Listener_config" path="/api/*" doc:name="HTTP Listener"/>
-    <apikit:router doc:name="APIkit Router" doc:id="353ccd89-b06c-4625-b4b8-3992df3b3a6e" config-ref="core-banking-accounts-system-api-config"/>
+    <apikit:router doc:name="APIkit Router" doc:id="4664fc5b-187a-4ee3-ba48-17bf8ed95c01" config-ref="core-banking-accounts-system-api-config"/>
 		<error-handler>
       <on-error-propagate type="APIKIT:NOT_FOUND" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
