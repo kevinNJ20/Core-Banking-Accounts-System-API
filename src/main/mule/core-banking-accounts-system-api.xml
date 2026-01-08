@@ -1,54 +1,55 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
-  xmlns:db="http://www.mulesoft.org/schema/mule/db"
   xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
   xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-      http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
       http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
 	http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
 
   <!-- GET /accounts - Business Logic Flow -->
   <flow name="get-accounts-business-logic" doc:name="get-accounts-business-logic">
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-      <ee:transform doc:name="Mock Select Accounts" doc:id="mock-select-accounts">
+      <ee:transform doc:name="Mock Select Accounts with Owners">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+var params = payload default {}
+var limit = (params.limit as Number default 100) as Number
+var offset = (params.offset as Number default 0) as Number
 ---
+// Mock data - simulating database query results
 [
   {
-    id: 1,
-    account_number: "ACC001",
-    account_type: "Checking",
-    account_name: "Compte Courant Principal",
+    id: "acc-001",
+    account_number: params.accountNumber default "ACC-000001",
+    account_type: params.accountType default "Checking",
+    account_name: "Primary Checking Account",
     currency: "USD",
     balance: 5000.00,
     available_balance: 4950.00,
-    status: "Active",
-    opened_date: "2024-01-01",
+    status: params.status default "Active",
+    opened_date: "2024-01-15T00:00:00Z" as DateTime,
     closed_date: null,
     interest_rate: 0.01,
-    created_at: "2024-01-01T10:00:00Z",
-    updated_at: "2024-01-01T10:00:00Z"
+    created_at: "2024-01-15T00:00:00Z" as DateTime,
+    updated_at: "2024-01-20T00:00:00Z" as DateTime
   },
   {
-    id: 2,
-    account_number: "ACC002",
+    id: "acc-002",
+    account_number: "ACC-000002",
     account_type: "Savings",
-    account_name: "Compte Épargne",
+    account_name: "Savings Account",
     currency: "USD",
     balance: 10000.00,
     available_balance: 10000.00,
     status: "Active",
-    opened_date: "2024-01-02",
+    opened_date: "2024-02-01T00:00:00Z" as DateTime,
     closed_date: null,
-    interest_rate: 0.02,
-    created_at: "2024-01-02T10:00:00Z",
-    updated_at: "2024-01-02T10:00:00Z"
+    interest_rate: 0.025,
+    created_at: "2024-02-01T00:00:00Z" as DateTime,
+    updated_at: "2024-02-01T00:00:00Z" as DateTime
   }
 ] default []]]></ee:set-payload>
         </ee:message>
@@ -78,10 +79,10 @@ payload map ((account) -> {
         </ee:message>
       </ee:transform>
 
-      <set-variable value="200" doc:name="httpStatus" doc:id="6e0cefb3-034d-49c2-89a9-2ec74a964e5c" variableName="httpStatus"/>
+      <set-variable value="200" doc:name="httpStatus" doc:id="d3d4a356-1b30-4ea3-bf48-82e66c597694" variableName="httpStatus"/>
       
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -96,7 +97,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="96664a60-6941-4879-8eba-fbf76b5b22b2" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="7c320052-c508-4655-9caa-122a076f36ab" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -131,32 +132,29 @@ payload.owners default []]]></ee:set-variable>
     </ee:transform>
 
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB insert par des données mockées -->
-      <ee:transform doc:name="Mock Insert Account" doc:id="mock-insert-account">
+      <ee:transform doc:name="Mock Insert Account">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var data = payload
+var req = payload
 ---
+// Mock insert - return created account
 [{
-  id: 1,
-  account_number: data.account_number,
-  account_type: data.account_type,
-  account_name: data.account_name,
-  currency: data.currency,
-  balance: data.balance,
-  available_balance: data.available_balance,
-  status: data.status,
-  opened_date: data.opened_date,
-  closed_date: data.closed_date,
-  interest_rate: data.interest_rate,
+  id: "acc-" ++ (now() as String {format: "yyyyMMddHHmmssSSS"}),
+  account_number: req.account_number,
+  account_type: req.account_type,
+  account_name: req.account_name default null,
+  currency: req.currency default "USD",
+  balance: req.balance default 0.00,
+  available_balance: req.available_balance default (req.balance default 0.00),
+  status: req.status default "Active",
+  opened_date: req.opened_date default now(),
+  closed_date: req.closed_date default null,
+  interest_rate: req.interest_rate default null,
   created_at: now(),
   updated_at: now()
 }]]]></ee:set-payload>
         </ee:message>
-      </ee:transform>
-
-      <ee:transform doc:name="Store Account ID">
         <ee:variables>
           <ee:set-variable variableName="accountId"><![CDATA[%dw 2.0
 output application/java
@@ -169,32 +167,17 @@ payload[0]]]></ee:set-variable>
         </ee:variables>
       </ee:transform>
 
-      <foreach doc:name="Insert Account Owners">
-        <!-- MOCK: Remplacement de l'appel DB insert par des données mockées -->
-        <ee:transform doc:name="Mock Insert Account Owner" doc:id="mock-insert-owner">
-          <ee:message>
-            <ee:set-payload><![CDATA[%dw 2.0
-output application/java
----
-{
-  success: true
-}]]></ee:set-payload>
-          </ee:message>
-        </ee:transform>
-      </foreach>
-
-      <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-      <ee:transform doc:name="Mock Get Owners" doc:id="mock-get-owners">
+      <ee:transform doc:name="Mock Get Owners">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+var owners = vars.owners default []
 ---
-[
-  {
-    customer_id: "550e8400-e29b-41d4-a716-446655440000",
-    relationship_type: "Primary"
-  }
-] default []]]></ee:set-payload>
+// Mock owners data
+owners map ((owner) -> {
+  customer_id: owner.customerId,
+  relationship_type: owner.relationshipType default "Primary"
+}) default []]]></ee:set-payload>
         </ee:message>
       </ee:transform>
 
@@ -227,10 +210,10 @@ var owners = payload
         </ee:message>
       </ee:transform>
 
-      <set-variable value="201" doc:name="httpStatus" doc:id="2f7e341a-d1ca-4d76-a064-09c3d6906ad7" variableName="httpStatus"/>
+      <set-variable value="201" doc:name="httpStatus" doc:id="94fe90a1-bf1a-4e70-8d3b-00f44171e627" variableName="httpStatus"/>
       
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -245,7 +228,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="3cc10db3-619c-4d0b-927c-4fd035d6dafa" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="2ffef3d2-8694-49db-bfe4-8f8be52a19b8" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -254,28 +237,31 @@ output application/json
   <!-- GET /accounts/{accountId} - Business Logic Flow -->
   <flow name="get-account-by-id-business-logic" doc:name="get-account-by-id-business-logic">
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-      <ee:transform doc:name="Mock Select Account by ID" doc:id="mock-select-account-by-id">
+      <ee:transform doc:name="Mock Select Account by ID">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var accountId = vars.accountId default 1
+var accountId = vars.accountId
 ---
-[{
-  id: accountId,
-  account_number: "ACC001",
-  account_type: "Checking",
-  account_name: "Compte Courant Principal",
-  currency: "USD",
-  balance: 5000.00,
-  available_balance: 4950.00,
-  status: "Active",
-  opened_date: "2024-01-01",
-  closed_date: null,
-  interest_rate: 0.01,
-  created_at: "2024-01-01T10:00:00Z",
-  updated_at: "2024-01-01T10:00:00Z"
-}] default []]]></ee:set-payload>
+// Mock data - return account if accountId matches, otherwise empty array
+if (accountId != null and accountId != "")
+  [{
+    id: accountId,
+    account_number: "ACC-000001",
+    account_type: "Checking",
+    account_name: "Primary Checking Account",
+    currency: "USD",
+    balance: 5000.00,
+    available_balance: 4950.00,
+    status: "Active",
+    opened_date: "2024-01-15T00:00:00Z" as DateTime,
+    closed_date: null,
+    interest_rate: 0.01,
+    created_at: "2024-01-15T00:00:00Z" as DateTime,
+    updated_at: "2024-01-20T00:00:00Z" as DateTime
+  }]
+else
+  []]]></ee:set-payload>
         </ee:message>
       </ee:transform>
 
@@ -290,18 +276,16 @@ payload[0]]]></ee:set-variable>
             </ee:variables>
           </ee:transform>
 
-          <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-          <ee:transform doc:name="Mock Get Owners" doc:id="mock-get-owners-2">
+          <ee:transform doc:name="Mock Get Owners">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
 output application/java
 ---
-[
-  {
-    customer_id: "550e8400-e29b-41d4-a716-446655440000",
-    relationship_type: "Primary"
-  }
-] default []]]></ee:set-payload>
+// Mock owners data
+[{
+  customer_id: "cust-001",
+  relationship_type: "Primary"
+}] default []]]></ee:set-payload>
             </ee:message>
           </ee:transform>
 
@@ -333,7 +317,7 @@ var owners = payload
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="200" doc:name="httpStatus" doc:id="82836fc2-c1b3-4ee9-96f0-5da1e836358d" variableName="httpStatus"/>
+					<set-variable value="200" doc:name="httpStatus" doc:id="bebce04d-9da2-4024-bc0d-d593708650b0" variableName="httpStatus"/>
         
 </when>
         <otherwise>
@@ -351,13 +335,13 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="404" doc:name="httpStatus" doc:id="edf39af7-7d02-466b-bbb4-1f0fd8a30797" variableName="httpStatus"/>
+					<set-variable value="404" doc:name="httpStatus" doc:id="da2fcef2-c579-4a34-a4a9-ceb3e96e5e92" variableName="httpStatus"/>
         
 </otherwise>
       </choice>
       
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -372,7 +356,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="92777e58-5cd9-415c-8594-41a69f107371" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="d49217d7-4216-4e11-84d6-430c32f4a848" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -405,28 +389,32 @@ output application/java
     </ee:transform>
 
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB update par des données mockées -->
-      <ee:transform doc:name="Mock Update Account" doc:id="mock-update-account">
+      <ee:transform doc:name="Mock Update Account">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var data = payload
+var req = payload
+var accountId = req.accountId
 ---
-[{
-  id: data.accountId,
-  account_number: data.account_number default "ACC001",
-  account_type: data.account_type default "Checking",
-  account_name: data.account_name default "Compte Courant",
-  currency: data.currency default "USD",
-  balance: data.balance default 5000.00,
-  available_balance: data.available_balance default 4950.00,
-  status: data.status default "Active",
-  opened_date: data.opened_date default "2024-01-01",
-  closed_date: data.closed_date,
-  interest_rate: data.interest_rate default 0.01,
-  created_at: "2024-01-01T10:00:00Z",
-  updated_at: now()
-}]]]></ee:set-payload>
+// Mock update - return updated account if accountId exists
+if (accountId != null and accountId != "")
+  [{
+    id: accountId,
+    account_number: req.account_number default "ACC-000001",
+    account_type: req.account_type default "Checking",
+    account_name: req.account_name default "Primary Checking Account",
+    currency: req.currency default "USD",
+    balance: req.balance default 5000.00,
+    available_balance: req.available_balance default 4950.00,
+    status: req.status default "Active",
+    opened_date: req.opened_date default ("2024-01-15T00:00:00Z" as DateTime),
+    closed_date: req.closed_date default null,
+    interest_rate: req.interest_rate default 0.01,
+    created_at: "2024-01-15T00:00:00Z" as DateTime,
+    updated_at: now()
+  }]
+else
+  []]]></ee:set-payload>
         </ee:message>
       </ee:transform>
 
@@ -434,10 +422,7 @@ var data = payload
         <when expression="#[sizeOf(payload) > 0]">
           <ee:transform doc:name="Store Account ID">
             <ee:variables>
-              <ee:set-variable variableName="accountId"><![CDATA[%dw 2.0
-output application/java
----
-payload[0].id]]></ee:set-variable>
+              <ee:set-variable variableName="accountId"><![CDATA[#[payload[0].id]]]></ee:set-variable>
               <ee:set-variable variableName="updatedAccount"><![CDATA[%dw 2.0
 output application/java
 ---
@@ -447,46 +432,20 @@ payload[0]]]></ee:set-variable>
           
           <choice doc:name="Update Owners?">
             <when expression="#[vars.owners != null]">
-              <!-- MOCK: Remplacement de l'appel DB delete par des données mockées -->
-              <ee:transform doc:name="Mock Delete Old Owners" doc:id="mock-delete-owners">
-                <ee:message>
-                  <ee:set-payload><![CDATA[%dw 2.0
-output application/java
----
-{
-  success: true
-}]]></ee:set-payload>
-                </ee:message>
-              </ee:transform>
-              
-              <foreach doc:name="Insert New Owners">
-                <!-- MOCK: Remplacement de l'appel DB insert par des données mockées -->
-                <ee:transform doc:name="Mock Insert New Owner" doc:id="mock-insert-new-owner">
-                  <ee:message>
-                    <ee:set-payload><![CDATA[%dw 2.0
-output application/java
----
-{
-  success: true
-}]]></ee:set-payload>
-                  </ee:message>
-                </ee:transform>
-              </foreach>
+              <!-- Mock: Delete and Insert Owners - no-op in mock -->
             </when>
           </choice>
           
-          <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-          <ee:transform doc:name="Mock Get Owners" doc:id="mock-get-owners-3">
+          <ee:transform doc:name="Mock Get Owners">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
 output application/java
 ---
-[
-  {
-    customer_id: "550e8400-e29b-41d4-a716-446655440000",
-    relationship_type: "Primary"
-  }
-] default []]]></ee:set-payload>
+// Mock owners data
+[{
+  customer_id: "cust-001",
+  relationship_type: "Primary"
+}] default []]]></ee:set-payload>
             </ee:message>
           </ee:transform>
           
@@ -518,7 +477,7 @@ var owners = payload
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="200" doc:name="httpStatus" doc:id="2441ca8b-c1dc-4766-b1ca-5e439b60bfbd" variableName="httpStatus" />
+					<set-variable value="200" doc:name="httpStatus" doc:id="d43d9b80-8880-4c92-8b2e-31b2c0c32430" variableName="httpStatus"/>
         
 </when>
         <otherwise>
@@ -536,13 +495,13 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="404" doc:name="httpStatus" doc:id="fc98a429-f711-4f9f-b206-075e66f9fc5a" variableName="httpStatus"/>
+					<set-variable value="404" doc:name="httpStatus" doc:id="24aa9e69-304d-43c0-a20f-1d86dc580c45" variableName="httpStatus"/>
         
 </otherwise>
       </choice>
       
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -557,7 +516,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="e15237e6-7064-49dd-b358-ca2804b43bc5" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="b44605c0-69cd-4ba0-8159-4d6c8c9ec21b" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -583,33 +542,35 @@ output application/java
     </ee:transform>
 
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-      <ee:transform doc:name="Mock Select Transactions" doc:id="mock-select-transactions">
+      <ee:transform doc:name="Mock Select Transactions">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+var params = payload default {}
+var accountId = params.accountId default vars.accountId
 ---
+// Mock transactions data
 [
   {
-    id: 1,
-    transaction_number: "TXN001",
-    account_id: 1,
-    transaction_type: "Debit",
+    id: "txn-001",
+    transaction_number: "TXN-000001",
+    account_id: accountId,
+    transaction_type: params.transactionType default "Debit",
     amount: -100.00,
     currency: "USD",
-    transaction_date: "2024-01-15",
-    value_date: "2024-01-15",
-    description: "Purchase at Store",
-    merchant_name: "Store ABC",
-    category: "Retail",
+    transaction_date: now(),
+    value_date: now(),
+    description: "Mock transaction",
+    merchant_name: "Mock Merchant",
+    category: "Shopping",
     check_number: null,
-    reference_number: "REF001",
+    reference_number: "REF-001",
     related_account_id: null,
-    status: "Posted",
+    status: params.status default "Posted",
     dispute_status: "None",
     dispute_reason: null,
-    created_at: "2024-01-15T10:00:00Z",
-    updated_at: "2024-01-15T10:00:00Z"
+    created_at: now(),
+    updated_at: now()
   }
 ] default []]]></ee:set-payload>
         </ee:message>
@@ -644,10 +605,10 @@ payload map ((txn) -> {
         </ee:message>
       </ee:transform>
 
-      <set-variable value="200" doc:name="httpStatus" doc:id="56c90a17-517b-4227-b6f1-cb7f0072f2dd" variableName="httpStatus"/>
+      <set-variable value="200" doc:name="httpStatus" doc:id="858a8f8e-5b03-4001-8757-210847286979" variableName="httpStatus"/>
       
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -662,7 +623,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="67963f25-0e78-4c6f-bbc5-bba9ed823f2b" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="f58a6275-05e5-4a6f-bca7-803ec8855393" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -697,31 +658,31 @@ output application/java
     </ee:transform>
 
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB insert par des données mockées -->
-      <ee:transform doc:name="Mock Insert Transaction" doc:id="mock-insert-transaction">
+      <ee:transform doc:name="Mock Insert Transaction">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var data = payload
+var req = payload
 ---
+// Mock insert - return created transaction
 [{
-  id: 1,
-  transaction_number: data.transaction_number,
-  account_id: data.account_id,
-  transaction_type: data.transaction_type,
-  amount: data.amount,
-  currency: data.currency,
-  transaction_date: data.transaction_date,
-  value_date: data.value_date,
-  description: data.description,
-  merchant_name: data.merchant_name,
-  category: data.category,
-  check_number: data.check_number,
-  reference_number: data.reference_number,
-  related_account_id: data.related_account_id,
-  status: data.status,
-  dispute_status: data.dispute_status,
-  dispute_reason: data.dispute_reason,
+  id: "txn-" ++ (now() as String {format: "yyyyMMddHHmmssSSS"}),
+  transaction_number: req.transaction_number,
+  account_id: req.account_id,
+  transaction_type: req.transaction_type,
+  amount: req.amount,
+  currency: req.currency default "USD",
+  transaction_date: req.transaction_date default now(),
+  value_date: req.value_date default null,
+  description: req.description default null,
+  merchant_name: req.merchant_name default null,
+  category: req.category default null,
+  check_number: req.check_number default null,
+  reference_number: req.reference_number default null,
+  related_account_id: req.related_account_id default null,
+  status: req.status default "Posted",
+  dispute_status: req.dispute_status default "None",
+  dispute_reason: req.dispute_reason default null,
   created_at: now(),
   updated_at: now()
 }]]]></ee:set-payload>
@@ -758,10 +719,10 @@ var txn = payload[0]
         </ee:message>
       </ee:transform>
 
-      <set-variable value="201" doc:name="httpStatus" doc:id="d160983a-887d-43ab-b838-bbbea94a1651" variableName="httpStatus"/>
+      <set-variable value="201" doc:name="httpStatus" doc:id="6e8b6c05-93a8-499d-b0d0-6366ac8befa5" variableName="httpStatus"/>
       
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -776,7 +737,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="cf095a39-2339-4bb2-98a6-bb27ab720d90" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="b023816d-c818-4a36-8def-c33ce63b0e09" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -785,34 +746,37 @@ output application/json
   <!-- GET /transactions/{transactionId} - Business Logic Flow -->
   <flow name="get-transaction-by-id-business-logic" doc:name="get-transaction-by-id-business-logic">
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB select par des données mockées -->
-      <ee:transform doc:name="Mock Select Transaction by ID" doc:id="mock-select-transaction-by-id">
+      <ee:transform doc:name="Mock Select Transaction by ID">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var transactionId = vars.transactionId default 1
+var transactionId = vars.transactionId
 ---
-[{
-  id: transactionId,
-  transaction_number: "TXN001",
-  account_id: 1,
-  transaction_type: "Debit",
-  amount: -100.00,
-  currency: "USD",
-  transaction_date: "2024-01-15",
-  value_date: "2024-01-15",
-  description: "Purchase at Store",
-  merchant_name: "Store ABC",
-  category: "Retail",
-  check_number: null,
-  reference_number: "REF001",
-  related_account_id: null,
-  status: "Posted",
-  dispute_status: "None",
-  dispute_reason: null,
-  created_at: "2024-01-15T10:00:00Z",
-  updated_at: "2024-01-15T10:00:00Z"
-}] default []]]></ee:set-payload>
+// Mock data - return transaction if transactionId matches, otherwise empty array
+if (transactionId != null and transactionId != "")
+  [{
+    id: transactionId,
+    transaction_number: "TXN-000001",
+    account_id: "acc-001",
+    transaction_type: "Debit",
+    amount: -100.00,
+    currency: "USD",
+    transaction_date: now(),
+    value_date: now(),
+    description: "Mock transaction",
+    merchant_name: "Mock Merchant",
+    category: "Shopping",
+    check_number: null,
+    reference_number: "REF-001",
+    related_account_id: null,
+    status: "Posted",
+    dispute_status: "None",
+    dispute_reason: null,
+    created_at: now(),
+    updated_at: now()
+  }]
+else
+  []]]></ee:set-payload>
         </ee:message>
       </ee:transform>
       <choice doc:name="Transaction Found?">
@@ -846,7 +810,7 @@ var txn = payload[0]
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="200" doc:name="httpStatus" doc:id="b1b35269-6910-4ca1-8467-8c4c5ef3f7ee" variableName="httpStatus"/>
+					<set-variable value="200" doc:name="httpStatus" doc:id="cbedaa58-fd37-4937-be8f-e83ac348e2eb" variableName="httpStatus"/>
         
 </when>
         <otherwise>
@@ -864,12 +828,12 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="404" doc:name="httpStatus" doc:id="5edfa6ca-cf47-4f97-b228-85a6c1d9afd8" variableName="httpStatus"/>
+					<set-variable value="404" doc:name="httpStatus" doc:id="f9e0d083-b9c9-41b9-a9ef-2179d85864d6" variableName="httpStatus"/>
         
 </otherwise>
       </choice>
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -884,7 +848,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-          <set-variable value="500" doc:name="httpStatus" doc:id="05436ac8-8bdb-4f5d-9162-1c16a66a6f2f" variableName="httpStatus"/>
+          <set-variable value="500" doc:name="httpStatus" doc:id="4cfb4f85-12fd-4dcb-ac2e-fe044bebf6f1" variableName="httpStatus"/>
         </on-error-propagate>
       </error-handler>
     </try>
@@ -918,34 +882,38 @@ output application/java
       </ee:message>
     </ee:transform>
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB update par des données mockées -->
-      <ee:transform doc:name="Mock Update Transaction" doc:id="mock-update-transaction">
+      <ee:transform doc:name="Mock Update Transaction">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var data = payload
+var req = payload
+var transactionId = req.transactionId
 ---
-[{
-  id: data.transactionId,
-  transaction_number: data.transaction_number default "TXN001",
-  account_id: 1,
-  transaction_type: data.transaction_type default "Debit",
-  amount: data.amount default -100.00,
-  currency: data.currency default "USD",
-  transaction_date: data.transaction_date default "2024-01-15",
-  value_date: data.value_date,
-  description: data.description,
-  merchant_name: data.merchant_name,
-  category: data.category,
-  check_number: data.check_number,
-  reference_number: data.reference_number,
-  related_account_id: data.related_account_id,
-  status: data.status default "Posted",
-  dispute_status: data.dispute_status default "None",
-  dispute_reason: data.dispute_reason,
-  created_at: "2024-01-15T10:00:00Z",
-  updated_at: now()
-}]]]></ee:set-payload>
+// Mock update - return updated transaction if transactionId exists
+if (transactionId != null and transactionId != "")
+  [{
+    id: transactionId,
+    transaction_number: req.transaction_number default "TXN-000001",
+    account_id: "acc-001",
+    transaction_type: req.transaction_type default "Debit",
+    amount: req.amount default -100.00,
+    currency: req.currency default "USD",
+    transaction_date: req.transaction_date default now(),
+    value_date: req.value_date default now(),
+    description: req.description default "Mock transaction",
+    merchant_name: req.merchant_name default "Mock Merchant",
+    category: req.category default "Shopping",
+    check_number: req.check_number default null,
+    reference_number: req.reference_number default "REF-001",
+    related_account_id: req.related_account_id default null,
+    status: req.status default "Posted",
+    dispute_status: req.dispute_status default "None",
+    dispute_reason: req.dispute_reason default null,
+    created_at: now(),
+    updated_at: now()
+  }]
+else
+  []]]></ee:set-payload>
         </ee:message>
       </ee:transform>
       <choice doc:name="Update Successful?">
@@ -979,7 +947,7 @@ var txn = payload[0]
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="200" doc:name="httpStatus" doc:id="59e3ee43-8e6c-4b70-83d8-5381d7d358c8" variableName="httpStatus"/>
+					<set-variable value="200" doc:name="httpStatus" doc:id="cd8acdcd-0d03-463c-b045-cc55536304c3" variableName="httpStatus"/>
         
 </when>
         <otherwise>
@@ -997,12 +965,12 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="404" doc:name="httpStatus" doc:id="ea0a92e5-da8f-4f17-86f3-f5b535f3cc41" variableName="httpStatus"/>
+					<set-variable value="404" doc:name="httpStatus" doc:id="9e5ab194-b2d0-4d1b-b4e2-8b725947ed3e" variableName="httpStatus"/>
         
 </otherwise>
       </choice>
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -1017,7 +985,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="500" doc:name="httpStatus" doc:id="16f0d1b6-c762-419e-ae44-26cf96f6913d" variableName="httpStatus"/>
+					<set-variable value="500" doc:name="httpStatus" doc:id="d7ba1b8f-3b61-4a9b-b2eb-c89627de2303" variableName="httpStatus"/>
         
 </on-error-propagate>
       </error-handler>
@@ -1027,35 +995,38 @@ output application/json
   <!-- POST /transactions/{transactionId}/dispute - Business Logic Flow -->
   <flow name="create-dispute-business-logic" doc:name="create-dispute-business-logic">
     <try doc:name="Try">
-      <!-- MOCK: Remplacement de l'appel DB update par des données mockées -->
-      <ee:transform doc:name="Mock Create Dispute" doc:id="mock-create-dispute">
+      <ee:transform doc:name="Mock Create Dispute">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var data = payload
-var transactionId = vars.transactionId default 1
+var transactionId = vars.transactionId
+var disputeReason = payload.disputeReason default "Mock dispute reason"
 ---
-[{
-  id: transactionId,
-  transaction_number: "TXN001",
-  account_id: 1,
-  transaction_type: "Debit",
-  amount: -100.00,
-  currency: "USD",
-  transaction_date: "2024-01-15",
-  value_date: "2024-01-15",
-  description: "Purchase at Store",
-  merchant_name: "Store ABC",
-  category: "Retail",
-  check_number: null,
-  reference_number: "REF001",
-  related_account_id: null,
-  status: "Posted",
-  dispute_status: "Pending",
-  dispute_reason: data.disputeReason,
-  created_at: "2024-01-15T10:00:00Z",
-  updated_at: now()
-}]]]></ee:set-payload>
+// Mock create dispute - return transaction with dispute if transactionId exists
+if (transactionId != null and transactionId != "")
+  [{
+    id: transactionId,
+    transaction_number: "TXN-000001",
+    account_id: "acc-001",
+    transaction_type: "Debit",
+    amount: -100.00,
+    currency: "USD",
+    transaction_date: now(),
+    value_date: now(),
+    description: "Mock transaction",
+    merchant_name: "Mock Merchant",
+    category: "Shopping",
+    check_number: null,
+    reference_number: "REF-001",
+    related_account_id: null,
+    status: "Posted",
+    dispute_status: "Pending",
+    dispute_reason: disputeReason,
+    created_at: now(),
+    updated_at: now()
+  }]
+else
+  []]]></ee:set-payload>
         </ee:message>
       </ee:transform>
       <choice doc:name="Dispute Created?">
@@ -1089,7 +1060,7 @@ var txn = payload[0]
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="200" doc:name="httpStatus" doc:id="0b592c46-6b13-4e95-ac60-cfde43b03788" variableName="httpStatus"/>
+					<set-variable value="200" doc:name="httpStatus" doc:id="3d4793c0-bfec-4910-be53-12c7b52e7f5c" variableName="httpStatus"/>
         
 </when>
         <otherwise>
@@ -1107,12 +1078,12 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="404" doc:name="httpStatus" doc:id="c98deb41-e1ce-483f-8574-10dcf5b5b7f6" variableName="httpStatus"/>
+					<set-variable value="404" doc:name="httpStatus" doc:id="379cfdca-ff77-4d69-a344-5a1bd22324e9" variableName="httpStatus"/>
         
 </otherwise>
       </choice>
       <error-handler>
-        <on-error-propagate type="DB:QUERY_EXECUTION,DB:CONNECTIVITY" enableNotifications="true" logException="true" doc:name="Database Error">
+        <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
           <ee:transform doc:name="Transform Error">
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
@@ -1127,7 +1098,7 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
           </ee:transform>
-					<set-variable value="500" doc:name="httpStatus" doc:id="ac6833ae-04ae-4583-b5f3-2cc8422c876b" variableName="httpStatus"/>
+					<set-variable value="500" doc:name="httpStatus" doc:id="008d3340-db1b-4333-9f2a-c1b496508cf8" variableName="httpStatus"/>
         
 </on-error-propagate>
       </error-handler>

@@ -20,7 +20,7 @@ http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/m
   <!-- Main HTTP Listener with APIkit Router -->
   <flow name="main">
     <http:listener config-ref="HTTP_Listener_config" path="/api/*" doc:name="HTTP Listener"/>
-    <apikit:router doc:name="APIkit Router" doc:id="733fa810-6de1-4495-9f0d-9ced3afa72ad" config-ref="core-banking-accounts-system-api-config"/>
+    <apikit:router doc:name="APIkit Router" doc:id="353ccd89-b06c-4625-b4b8-3992df3b3a6e" config-ref="core-banking-accounts-system-api-config"/>
 		<error-handler>
       <on-error-propagate type="APIKIT:NOT_FOUND" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -37,7 +37,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-        <set-variable value="404" doc:name="httpStatus" doc:id="7742ce27-0c13-498f-bb89-9634d5eac600" variableName="httpStatus"/>
+        <set-variable value="404" doc:name="httpStatus" doc:id="fd403a76-edc6-486c-b2bb-4cbf00499e8b" variableName="httpStatus"/>
       </on-error-propagate>
       <on-error-propagate type="APIKIT:BAD_REQUEST" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -54,7 +54,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-				<set-variable value="400" doc:name="httpStatus" doc:id="2372911f-3e13-4c17-9508-e14942a87cd5" variableName="httpStatus" />
+        <set-variable value="400" doc:name="httpStatus" doc:id="a6d8d928-d444-454d-98bd-3025248e4764" variableName="httpStatus"/>
       </on-error-propagate>
       <on-error-propagate type="APIKIT:NOT_ACCEPTABLE" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -71,7 +71,7 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-				<set-variable value="406" doc:name="httpStatus" doc:id="82f13ab1-e581-4f7d-9516-6e75e6221361" variableName="httpStatus" />
+        <set-variable value="406" doc:name="httpStatus" doc:id="e1ad169e-52be-468e-aaf4-fa327568d0a8" variableName="httpStatus"/>
       </on-error-propagate>
       <on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
@@ -88,8 +88,9 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-				<set-variable value="415" doc:name="httpStatus" doc:id="1a9cd1c3-ea44-4db4-93e1-62dd8bc1de69" variableName="httpStatus" />
-      </on-error-propagate>
+				<set-variable value="415" doc:name="httpStatus" doc:id="5da86030-a839-4862-bab0-edcc7e93e4c4" variableName="httpStatus"/>
+      
+</on-error-propagate>
       <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED" enableNotifications="true" logException="true" doc:name="On Error Propagate">
         <ee:transform doc:name="Transform Error Response">
           <ee:message>
@@ -105,8 +106,9 @@ output application/json
 }]]></ee:set-payload>
           </ee:message>
         </ee:transform>
-				<set-variable value="405" doc:name="httpStatus" doc:id="ec8c94c3-dda6-46c8-89a1-516361aa4468" variableName="httpStatus" />
-      </on-error-propagate>
+				<set-variable value="405" doc:name="httpStatus" doc:id="efcc70dc-0a77-4b44-af5d-be3ca7199dab" variableName="httpStatus"/>
+      
+</on-error-propagate>
     </error-handler>
   </flow>
 

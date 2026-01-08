@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
 	<modelVersion>4.0.0</modelVersion>
-	<groupId>167d12fd-a524-4ceb-9804-cb9e9ac3cdc3</groupId>
+	<groupId>com.mulesoft.app</groupId>
 	<artifactId>core-banking-accounts-system-api</artifactId>
 	<version>1.0.0</version>
 	<packaging>mule-application</packaging>
@@ -24,9 +24,7 @@
 				<artifactId>mule-maven-plugin</artifactId>
 				<version>${mule.maven.plugin.version}</version>
 				<extensions>true</extensions>
-				<configuration>
-					<classifier>mule-application</classifier>
-				</configuration>
+				<configuration/>
 			</plugin>
 		</plugins>
 	</build>
@@ -55,14 +53,7 @@
 			</snapshots>
 		</pluginRepository>
 	</pluginRepositories>
-
 	<dependencies>
-		<!-- PostgreSQL JDBC Driver -->
-		<dependency>
-			<groupId>org.postgresql</groupId>
-			<artifactId>postgresql</artifactId>
-			<version>42.7.3</version>
-		</dependency>
 		<!-- MUnit (for testing) -->
 		<dependency>
 			<groupId>org.mule.tests</groupId>
@@ -72,14 +63,14 @@
 		</dependency>
 		<dependency>
 			<groupId>org.mule.modules</groupId>
-			<artifactId>mule-apikit-module</artifactId>
-			<version>1.11.10</version>
+			<artifactId>mule-json-module</artifactId>
+			<version>2.5.4</version>
 			<classifier>mule-plugin</classifier>
 		</dependency>
 		<dependency>
-			<groupId>org.mule.connectors</groupId>
-			<artifactId>mule-db-connector</artifactId>
-			<version>1.14.17</version>
+			<groupId>org.mule.modules</groupId>
+			<artifactId>mule-apikit-module</artifactId>
+			<version>1.11.10</version>
 			<classifier>mule-plugin</classifier>
 		</dependency>
 		<dependency>
@@ -92,12 +83,6 @@
 			<groupId>org.mule.modules</groupId>
 			<artifactId>mule-validation-module</artifactId>
 			<version>2.0.8</version>
-			<classifier>mule-plugin</classifier>
-		</dependency>
-		<dependency>
-			<groupId>org.mule.modules</groupId>
-			<artifactId>mule-json-module</artifactId>
-			<version>2.5.4</version>
 			<classifier>mule-plugin</classifier>
 		</dependency>
 	</dependencies>
