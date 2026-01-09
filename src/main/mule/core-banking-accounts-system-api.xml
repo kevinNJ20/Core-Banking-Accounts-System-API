@@ -433,6 +433,7 @@ payload[0]]]></ee:set-variable>
           <choice doc:name="Update Owners?">
             <when expression="#[vars.owners != null]">
               <!-- Mock: Delete and Insert Owners - no-op in mock -->
+              <set-variable value="#[vars.owners]" variableName="owners" doc:name="No-op: Keep owners"/>
             </when>
           </choice>
           
