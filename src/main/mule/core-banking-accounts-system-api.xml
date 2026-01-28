@@ -38,19 +38,26 @@ if (payload is Array) payload else [payload] default []]]></ee:set-variable>
         </ee:variables>
       </ee:transform>
 
-      <db:select config-ref="Database_Config" doc:name="Select Account Owners">
-        <db:sql><![CDATA[
-          SELECT account_id, customer_id, relationship_type
-          FROM account_owners
-          WHERE account_id = ANY(:accountIds::uuid[])
-        ]]></db:sql>
-        <db:input-parameters><![CDATA[#[%dw 2.0
+      <choice doc:name="Has Accounts?">
+        <when expression="#[sizeOf(vars.accounts) > 0]">
+          <db:select config-ref="Database_Config" doc:name="Select Account Owners">
+            <db:sql><![CDATA[
+              SELECT account_id, customer_id, relationship_type
+              FROM account_owners
+              WHERE account_id = ANY(:accountIds::uuid[])
+            ]]></db:sql>
+            <db:input-parameters><![CDATA[#[%dw 2.0
 output application/java
 ---
 {
   accountIds: vars.accounts map ((acc) -> acc.id)
 }]]]></db:input-parameters>
-      </db:select>
+          </db:select>
+        </when>
+        <otherwise>
+          <set-payload value="#[[]]" doc:name="Set Empty Array"/>
+        </otherwise>
+      </choice>
 
       <ee:transform doc:name="Transform to Account Response">
         <ee:message>
