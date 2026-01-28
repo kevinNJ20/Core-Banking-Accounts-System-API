@@ -4,64 +4,64 @@
   xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
       xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
       http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
-	http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+	http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
 
   <!-- GET /accounts - Business Logic Flow -->
   <flow name="get-accounts-business-logic" doc:name="get-accounts-business-logic">
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Select Accounts with Owners">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
+      <db:select config-ref="Database_Config" doc:name="Select Accounts">
+        <db:sql><![CDATA[
+          SELECT DISTINCT a.*
+          FROM accounts a
+          LEFT JOIN account_owners ao ON a.id = ao.account_id
+          WHERE
+            (:customerId::uuid IS NULL OR ao.customer_id = :customerId::uuid)
+            AND (:accountNumber IS NULL OR a.account_number = :accountNumber)
+            AND (:accountType IS NULL OR a.account_type = :accountType)
+            AND (:status IS NULL OR a.status = :status)
+          ORDER BY a.created_at DESC
+          LIMIT :limit::integer OFFSET :offset::integer
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload default {}]]]></db:input-parameters>
+      </db:select>
+
+      <ee:transform doc:name="Store Accounts">
+        <ee:variables>
+          <ee:set-variable variableName="accounts"><![CDATA[%dw 2.0
 output application/java
-var params = payload default {}
-var limit = (params.limit as Number default 100) as Number
-var offset = (params.offset as Number default 0) as Number
 ---
-// Mock data - simulating database query results
-[
-  {
-    id: "acc-001",
-    account_number: params.accountNumber default "ACC-000001",
-    account_type: params.accountType default "Checking",
-    account_name: "Primary Checking Account",
-    currency: "USD",
-    balance: 5000.00,
-    available_balance: 4950.00,
-    status: params.status default "Active",
-    opened_date: "2024-01-15T00:00:00Z" as DateTime,
-    closed_date: null,
-    interest_rate: 0.01,
-    created_at: "2024-01-15T00:00:00Z" as DateTime,
-    updated_at: "2024-01-20T00:00:00Z" as DateTime
-  },
-  {
-    id: "acc-002",
-    account_number: "ACC-000002",
-    account_type: "Savings",
-    account_name: "Savings Account",
-    currency: "USD",
-    balance: 10000.00,
-    available_balance: 10000.00,
-    status: "Active",
-    opened_date: "2024-02-01T00:00:00Z" as DateTime,
-    closed_date: null,
-    interest_rate: 0.025,
-    created_at: "2024-02-01T00:00:00Z" as DateTime,
-    updated_at: "2024-02-01T00:00:00Z" as DateTime
-  }
-] default []]]></ee:set-payload>
-        </ee:message>
+if (payload is Array) payload else [payload] default []]]></ee:set-variable>
+        </ee:variables>
       </ee:transform>
+
+      <db:select config-ref="Database_Config" doc:name="Select Account Owners">
+        <db:sql><![CDATA[
+          SELECT account_id, customer_id, relationship_type
+          FROM account_owners
+          WHERE account_id = ANY(:accountIds::uuid[])
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[%dw 2.0
+output application/java
+---
+{
+  accountIds: vars.accounts map ((acc) -> acc.id)
+}]]]></db:input-parameters>
+      </db:select>
 
       <ee:transform doc:name="Transform to Account Response">
         <ee:message>
           <ee:set-payload><![CDATA[%dw 2.0
 output application/json
+var accounts = vars.accounts
+var owners = payload
+var ownersByAccount = owners groupBy $.account_id
 ---
-payload map ((account) -> {
-  id: account.id,
+accounts map ((account) -> {
+  id: account.id as String,
   accountNumber: account.account_number,
   accountType: account.account_type,
   accountName: account.account_name,
@@ -72,7 +72,10 @@ payload map ((account) -> {
   openedDate: account.opened_date,
   closedDate: account.closed_date,
   interestRate: account.interest_rate,
-  owners: [],
+  owners: (ownersByAccount[account.id as String] default []) map ((owner) -> {
+    customerId: owner.customer_id as String,
+    relationshipType: owner.relationship_type
+  }),
   createdAt: account.created_at,
   updatedAt: account.updated_at
 })]]></ee:set-payload>
@@ -132,29 +135,22 @@ payload.owners default []]]></ee:set-variable>
     </ee:transform>
 
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Insert Account">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var req = payload
----
-// Mock insert - return created account
-[{
-  id: "acc-" ++ (now() as String {format: "yyyyMMddHHmmssSSS"}),
-  account_number: req.account_number,
-  account_type: req.account_type,
-  account_name: req.account_name default null,
-  currency: req.currency default "USD",
-  balance: req.balance default 0.00,
-  available_balance: req.available_balance default (req.balance default 0.00),
-  status: req.status default "Active",
-  opened_date: req.opened_date default now(),
-  closed_date: req.closed_date default null,
-  interest_rate: req.interest_rate default null,
-  created_at: now(),
-  updated_at: now()
-}]]]></ee:set-payload>
-        </ee:message>
+      <db:insert config-ref="Database_Config" doc:name="Insert Account">
+        <db:sql><![CDATA[
+          INSERT INTO accounts (
+            account_number, account_type, account_name, currency,
+            balance, available_balance, status, opened_date, closed_date, interest_rate
+          )
+          VALUES (
+            :account_number, :account_type, :account_name, :currency,
+            :balance, :available_balance, :status, :opened_date::date, :closed_date::date, :interest_rate
+          )
+          RETURNING *
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:insert>
+
+      <ee:transform doc:name="Store Account">
         <ee:variables>
           <ee:set-variable variableName="accountId"><![CDATA[%dw 2.0
 output application/java
@@ -167,19 +163,50 @@ payload[0]]]></ee:set-variable>
         </ee:variables>
       </ee:transform>
 
-      <ee:transform doc:name="Mock Get Owners">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
+      <choice doc:name="Has Owners?">
+        <when expression="#[sizeOf(vars.owners) > 0]">
+          <ee:transform doc:name="Transform Owners for Insert">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var owners = vars.owners default []
 ---
-// Mock owners data
-owners map ((owner) -> {
+vars.owners map ((owner) -> {
+  account_id: vars.accountId,
   customer_id: owner.customerId,
   relationship_type: owner.relationshipType default "Primary"
-}) default []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+})]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+
+          <foreach doc:name="Insert Owners">
+            <db:insert config-ref="Database_Config" doc:name="Insert Owner">
+              <db:sql><![CDATA[
+                INSERT INTO account_owners (
+                  account_id, customer_id, relationship_type
+                )
+                VALUES (
+                  :account_id::uuid, :customer_id::uuid, :relationship_type
+                )
+                ON CONFLICT (account_id, customer_id) DO UPDATE SET
+                  relationship_type = EXCLUDED.relationship_type
+                RETURNING *
+              ]]></db:sql>
+              <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+            </db:insert>
+          </foreach>
+        </when>
+      </choice>
+
+      <db:select config-ref="Database_Config" doc:name="Get Owners">
+        <db:sql><![CDATA[
+          SELECT customer_id, relationship_type
+          FROM account_owners
+          WHERE account_id = :accountId::uuid
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          accountId: vars.accountId
+        }]]]></db:input-parameters>
+      </db:select>
 
       <ee:transform doc:name="Transform Response">
         <ee:message>
@@ -189,7 +216,7 @@ var account = vars.account
 var owners = payload
 ---
 {
-  id: account.id,
+  id: account.id as String,
   accountNumber: account.account_number,
   accountType: account.account_type,
   accountName: account.account_name,
@@ -201,7 +228,7 @@ var owners = payload
   closedDate: account.closed_date,
   interestRate: account.interest_rate,
   owners: owners map ((owner) -> {
-    customerId: owner.customer_id,
+    customerId: owner.customer_id as String,
     relationshipType: owner.relationship_type
   }),
   createdAt: account.created_at,
@@ -237,33 +264,16 @@ output application/json
   <!-- GET /accounts/{accountId} - Business Logic Flow -->
   <flow name="get-account-by-id-business-logic" doc:name="get-account-by-id-business-logic">
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Select Account by ID">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var accountId = vars.accountId
----
-// Mock data - return account if accountId matches, otherwise empty array
-if (accountId != null and accountId != "")
-  [{
-    id: accountId,
-    account_number: "ACC-000001",
-    account_type: "Checking",
-    account_name: "Primary Checking Account",
-    currency: "USD",
-    balance: 5000.00,
-    available_balance: 4950.00,
-    status: "Active",
-    opened_date: "2024-01-15T00:00:00Z" as DateTime,
-    closed_date: null,
-    interest_rate: 0.01,
-    created_at: "2024-01-15T00:00:00Z" as DateTime,
-    updated_at: "2024-01-20T00:00:00Z" as DateTime
-  }]
-else
-  []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:select config-ref="Database_Config" doc:name="Select Account by ID">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM accounts
+          WHERE id = :accountId::uuid
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          accountId: vars.accountId
+        }]]]></db:input-parameters>
+      </db:select>
 
       <choice doc:name="Account Found?">
         <when expression="#[sizeOf(payload) > 0]">
@@ -276,18 +286,16 @@ payload[0]]]></ee:set-variable>
             </ee:variables>
           </ee:transform>
 
-          <ee:transform doc:name="Mock Get Owners">
-            <ee:message>
-              <ee:set-payload><![CDATA[%dw 2.0
-output application/java
----
-// Mock owners data
-[{
-  customer_id: "cust-001",
-  relationship_type: "Primary"
-}] default []]]></ee:set-payload>
-            </ee:message>
-          </ee:transform>
+          <db:select config-ref="Database_Config" doc:name="Get Owners">
+            <db:sql><![CDATA[
+              SELECT customer_id, relationship_type
+              FROM account_owners
+              WHERE account_id = :accountId::uuid
+            ]]></db:sql>
+            <db:input-parameters><![CDATA[#[{
+              accountId: vars.accountId
+            }]]]></db:input-parameters>
+          </db:select>
 
           <ee:transform doc:name="Transform Response">
             <ee:message>
@@ -297,7 +305,7 @@ var account = vars.account
 var owners = payload
 ---
 {
-  id: account.id,
+  id: account.id as String,
   accountNumber: account.account_number,
   accountType: account.account_type,
   accountName: account.account_name,
@@ -309,7 +317,7 @@ var owners = payload
   closedDate: account.closed_date,
   interestRate: account.interest_rate,
   owners: owners map ((owner) -> {
-    customerId: owner.customer_id,
+    customerId: owner.customer_id as String,
     relationshipType: owner.relationship_type
   }),
   createdAt: account.created_at,
@@ -389,38 +397,30 @@ output application/java
     </ee:transform>
 
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Update Account">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var req = payload
-var accountId = req.accountId
----
-// Mock update - return updated account if accountId exists
-if (accountId != null and accountId != "")
-  [{
-    id: accountId,
-    account_number: req.account_number default "ACC-000001",
-    account_type: req.account_type default "Checking",
-    account_name: req.account_name default "Primary Checking Account",
-    currency: req.currency default "USD",
-    balance: req.balance default 5000.00,
-    available_balance: req.available_balance default 4950.00,
-    status: req.status default "Active",
-    opened_date: req.opened_date default ("2024-01-15T00:00:00Z" as DateTime),
-    closed_date: req.closed_date default null,
-    interest_rate: req.interest_rate default 0.01,
-    created_at: "2024-01-15T00:00:00Z" as DateTime,
-    updated_at: now()
-  }]
-else
-  []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:update config-ref="Database_Config" doc:name="Update Account">
+        <db:sql><![CDATA[
+          UPDATE accounts
+          SET
+            account_number = COALESCE(:account_number, account_number),
+            account_type = COALESCE(:account_type, account_type),
+            account_name = COALESCE(:account_name, account_name),
+            currency = COALESCE(:currency, currency),
+            balance = COALESCE(:balance, balance),
+            available_balance = COALESCE(:available_balance, available_balance),
+            status = COALESCE(:status, status),
+            opened_date = COALESCE(:opened_date::date, opened_date),
+            closed_date = COALESCE(:closed_date::date, closed_date),
+            interest_rate = COALESCE(:interest_rate, interest_rate),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = :accountId::uuid
+          RETURNING *
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:update>
 
       <choice doc:name="Update Successful?">
         <when expression="#[sizeOf(payload) > 0]">
-          <ee:transform doc:name="Store Account ID">
+          <ee:transform doc:name="Store Account">
             <ee:variables>
               <ee:set-variable variableName="accountId"><![CDATA[#[payload[0].id]]]></ee:set-variable>
               <ee:set-variable variableName="updatedAccount"><![CDATA[%dw 2.0
@@ -432,23 +432,58 @@ payload[0]]]></ee:set-variable>
           
           <choice doc:name="Update Owners?">
             <when expression="#[vars.owners != null]">
-              <!-- Mock: Delete and Insert Owners - no-op in mock -->
-              <set-variable value="#[vars.owners]" variableName="owners" doc:name="No-op: Keep owners"/>
+              <db:delete config-ref="Database_Config" doc:name="Delete Existing Owners">
+                <db:sql><![CDATA[
+                  DELETE FROM account_owners
+                  WHERE account_id = :accountId::uuid
+                ]]></db:sql>
+                <db:input-parameters><![CDATA[#[{
+                  accountId: vars.accountId
+                }]]]></db:input-parameters>
+              </db:delete>
+
+              <ee:transform doc:name="Transform Owners for Insert">
+                <ee:message>
+                  <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.owners map ((owner) -> {
+  account_id: vars.accountId,
+  customer_id: owner.customerId,
+  relationship_type: owner.relationshipType default "Primary"
+})]]></ee:set-payload>
+                </ee:message>
+              </ee:transform>
+
+              <foreach doc:name="Insert Owners">
+                <db:insert config-ref="Database_Config" doc:name="Insert Owner">
+                  <db:sql><![CDATA[
+                    INSERT INTO account_owners (
+                      account_id, customer_id, relationship_type
+                    )
+                    VALUES (
+                      :account_id::uuid, :customer_id::uuid, :relationship_type
+                    )
+                    ON CONFLICT (account_id, customer_id) DO UPDATE SET
+                      relationship_type = EXCLUDED.relationship_type
+                    RETURNING *
+                  ]]></db:sql>
+                  <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+                </db:insert>
+              </foreach>
             </when>
           </choice>
           
-          <ee:transform doc:name="Mock Get Owners">
-            <ee:message>
-              <ee:set-payload><![CDATA[%dw 2.0
-output application/java
----
-// Mock owners data
-[{
-  customer_id: "cust-001",
-  relationship_type: "Primary"
-}] default []]]></ee:set-payload>
-            </ee:message>
-          </ee:transform>
+          <db:select config-ref="Database_Config" doc:name="Get Owners">
+            <db:sql><![CDATA[
+              SELECT customer_id, relationship_type
+              FROM account_owners
+              WHERE account_id = :accountId::uuid
+            ]]></db:sql>
+            <db:input-parameters><![CDATA[#[{
+              accountId: vars.accountId
+            }]]]></db:input-parameters>
+          </db:select>
           
           <ee:transform doc:name="Transform Response">
             <ee:message>
@@ -458,7 +493,7 @@ var account = vars.updatedAccount
 var owners = payload
 ---
 {
-  id: account.id,
+  id: account.id as String,
   accountNumber: account.account_number,
   accountType: account.account_type,
   accountName: account.account_name,
@@ -470,7 +505,7 @@ var owners = payload
   closedDate: account.closed_date,
   interestRate: account.interest_rate,
   owners: owners map ((owner) -> {
-    customerId: owner.customer_id,
+    customerId: owner.customer_id as String,
     relationshipType: owner.relationship_type
   }),
   createdAt: account.created_at,
@@ -543,39 +578,20 @@ output application/java
     </ee:transform>
 
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Select Transactions">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var params = payload default {}
-var accountId = params.accountId default vars.accountId
----
-// Mock transactions data
-[
-  {
-    id: "txn-001",
-    transaction_number: "TXN-000001",
-    account_id: accountId,
-    transaction_type: params.transactionType default "Debit",
-    amount: -100.00,
-    currency: "USD",
-    transaction_date: now(),
-    value_date: now(),
-    description: "Mock transaction",
-    merchant_name: "Mock Merchant",
-    category: "Shopping",
-    check_number: null,
-    reference_number: "REF-001",
-    related_account_id: null,
-    status: params.status default "Posted",
-    dispute_status: "None",
-    dispute_reason: null,
-    created_at: now(),
-    updated_at: now()
-  }
-] default []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:select config-ref="Database_Config" doc:name="Select Transactions">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM transactions
+          WHERE account_id = :accountId::uuid
+            AND (:startDate::date IS NULL OR transaction_date >= :startDate::date)
+            AND (:endDate::date IS NULL OR transaction_date <= :endDate::date)
+            AND (:transactionType IS NULL OR transaction_type = :transactionType)
+            AND (:status IS NULL OR status = :status)
+          ORDER BY transaction_date DESC
+          LIMIT :limit::integer OFFSET :offset::integer
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload default {}]]]></db:input-parameters>
+      </db:select>
 
       <ee:transform doc:name="Transform Response">
         <ee:message>
@@ -583,9 +599,9 @@ var accountId = params.accountId default vars.accountId
 output application/json
 ---
 payload map ((txn) -> {
-  id: txn.id,
+  id: txn.id as String,
   transactionNumber: txn.transaction_number,
-  accountId: txn.account_id,
+  accountId: txn.account_id as String,
   transactionType: txn.transaction_type,
   amount: txn.amount,
   currency: txn.currency,
@@ -596,7 +612,7 @@ payload map ((txn) -> {
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id,
+  relatedAccountId: txn.related_account_id as String,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -659,36 +675,24 @@ output application/java
     </ee:transform>
 
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Insert Transaction">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var req = payload
----
-// Mock insert - return created transaction
-[{
-  id: "txn-" ++ (now() as String {format: "yyyyMMddHHmmssSSS"}),
-  transaction_number: req.transaction_number,
-  account_id: req.account_id,
-  transaction_type: req.transaction_type,
-  amount: req.amount,
-  currency: req.currency default "USD",
-  transaction_date: req.transaction_date default now(),
-  value_date: req.value_date default null,
-  description: req.description default null,
-  merchant_name: req.merchant_name default null,
-  category: req.category default null,
-  check_number: req.check_number default null,
-  reference_number: req.reference_number default null,
-  related_account_id: req.related_account_id default null,
-  status: req.status default "Posted",
-  dispute_status: req.dispute_status default "None",
-  dispute_reason: req.dispute_reason default null,
-  created_at: now(),
-  updated_at: now()
-}]]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:insert config-ref="Database_Config" doc:name="Insert Transaction">
+        <db:sql><![CDATA[
+          INSERT INTO transactions (
+            transaction_number, account_id, transaction_type, amount, currency,
+            transaction_date, value_date, description, merchant_name, category,
+            check_number, reference_number, related_account_id, status,
+            dispute_status, dispute_reason
+          )
+          VALUES (
+            :transaction_number, :account_id::uuid, :transaction_type, :amount, :currency,
+            :transaction_date::timestamp, :value_date::date, :description, :merchant_name, :category,
+            :check_number, :reference_number, :related_account_id::uuid, :status,
+            :dispute_status, :dispute_reason
+          )
+          RETURNING *
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:insert>
 
       <ee:transform doc:name="Transform Response">
         <ee:message>
@@ -697,9 +701,9 @@ output application/json
 var txn = payload[0]
 ---
 {
-  id: txn.id,
+  id: txn.id as String,
   transactionNumber: txn.transaction_number,
-  accountId: txn.account_id,
+  accountId: txn.account_id as String,
   transactionType: txn.transaction_type,
   amount: txn.amount,
   currency: txn.currency,
@@ -710,7 +714,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id,
+  relatedAccountId: txn.related_account_id as String,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -747,39 +751,16 @@ output application/json
   <!-- GET /transactions/{transactionId} - Business Logic Flow -->
   <flow name="get-transaction-by-id-business-logic" doc:name="get-transaction-by-id-business-logic">
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Select Transaction by ID">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var transactionId = vars.transactionId
----
-// Mock data - return transaction if transactionId matches, otherwise empty array
-if (transactionId != null and transactionId != "")
-  [{
-    id: transactionId,
-    transaction_number: "TXN-000001",
-    account_id: "acc-001",
-    transaction_type: "Debit",
-    amount: -100.00,
-    currency: "USD",
-    transaction_date: now(),
-    value_date: now(),
-    description: "Mock transaction",
-    merchant_name: "Mock Merchant",
-    category: "Shopping",
-    check_number: null,
-    reference_number: "REF-001",
-    related_account_id: null,
-    status: "Posted",
-    dispute_status: "None",
-    dispute_reason: null,
-    created_at: now(),
-    updated_at: now()
-  }]
-else
-  []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:select config-ref="Database_Config" doc:name="Select Transaction by ID">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM transactions
+          WHERE id = :transactionId::uuid
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          transactionId: vars.transactionId
+        }]]]></db:input-parameters>
+      </db:select>
       <choice doc:name="Transaction Found?">
         <when expression="#[sizeOf(payload) > 0]">
           <ee:transform doc:name="Transform Response">
@@ -789,9 +770,9 @@ output application/json
 var txn = payload[0]
 ---
 {
-  id: txn.id,
+  id: txn.id as String,
   transactionNumber: txn.transaction_number,
-  accountId: txn.account_id,
+  accountId: txn.account_id as String,
   transactionType: txn.transaction_type,
   amount: txn.amount,
   currency: txn.currency,
@@ -802,7 +783,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id,
+  relatedAccountId: txn.related_account_id as String,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -883,40 +864,31 @@ output application/java
       </ee:message>
     </ee:transform>
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Update Transaction">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var req = payload
-var transactionId = req.transactionId
----
-// Mock update - return updated transaction if transactionId exists
-if (transactionId != null and transactionId != "")
-  [{
-    id: transactionId,
-    transaction_number: req.transaction_number default "TXN-000001",
-    account_id: "acc-001",
-    transaction_type: req.transaction_type default "Debit",
-    amount: req.amount default -100.00,
-    currency: req.currency default "USD",
-    transaction_date: req.transaction_date default now(),
-    value_date: req.value_date default now(),
-    description: req.description default "Mock transaction",
-    merchant_name: req.merchant_name default "Mock Merchant",
-    category: req.category default "Shopping",
-    check_number: req.check_number default null,
-    reference_number: req.reference_number default "REF-001",
-    related_account_id: req.related_account_id default null,
-    status: req.status default "Posted",
-    dispute_status: req.dispute_status default "None",
-    dispute_reason: req.dispute_reason default null,
-    created_at: now(),
-    updated_at: now()
-  }]
-else
-  []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:update config-ref="Database_Config" doc:name="Update Transaction">
+        <db:sql><![CDATA[
+          UPDATE transactions
+          SET
+            transaction_number = COALESCE(:transaction_number, transaction_number),
+            transaction_type = COALESCE(:transaction_type, transaction_type),
+            amount = COALESCE(:amount, amount),
+            currency = COALESCE(:currency, currency),
+            transaction_date = COALESCE(:transaction_date::timestamp, transaction_date),
+            value_date = COALESCE(:value_date::date, value_date),
+            description = COALESCE(:description, description),
+            merchant_name = COALESCE(:merchant_name, merchant_name),
+            category = COALESCE(:category, category),
+            check_number = COALESCE(:check_number, check_number),
+            reference_number = COALESCE(:reference_number, reference_number),
+            related_account_id = COALESCE(:related_account_id::uuid, related_account_id),
+            status = COALESCE(:status, status),
+            dispute_status = COALESCE(:dispute_status, dispute_status),
+            dispute_reason = COALESCE(:dispute_reason, dispute_reason),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = :transactionId::uuid
+          RETURNING *
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
+      </db:update>
       <choice doc:name="Update Successful?">
         <when expression="#[sizeOf(payload) > 0]">
           <ee:transform doc:name="Transform Response">
@@ -926,9 +898,9 @@ output application/json
 var txn = payload[0]
 ---
 {
-  id: txn.id,
+  id: txn.id as String,
   transactionNumber: txn.transaction_number,
-  accountId: txn.account_id,
+  accountId: txn.account_id as String,
   transactionType: txn.transaction_type,
   amount: txn.amount,
   currency: txn.currency,
@@ -939,7 +911,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id,
+  relatedAccountId: txn.related_account_id as String,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -996,40 +968,21 @@ output application/json
   <!-- POST /transactions/{transactionId}/dispute - Business Logic Flow -->
   <flow name="create-dispute-business-logic" doc:name="create-dispute-business-logic">
     <try doc:name="Try">
-      <ee:transform doc:name="Mock Create Dispute">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
-output application/java
-var transactionId = vars.transactionId
-var disputeReason = payload.disputeReason default "Mock dispute reason"
----
-// Mock create dispute - return transaction with dispute if transactionId exists
-if (transactionId != null and transactionId != "")
-  [{
-    id: transactionId,
-    transaction_number: "TXN-000001",
-    account_id: "acc-001",
-    transaction_type: "Debit",
-    amount: -100.00,
-    currency: "USD",
-    transaction_date: now(),
-    value_date: now(),
-    description: "Mock transaction",
-    merchant_name: "Mock Merchant",
-    category: "Shopping",
-    check_number: null,
-    reference_number: "REF-001",
-    related_account_id: null,
-    status: "Posted",
-    dispute_status: "Pending",
-    dispute_reason: disputeReason,
-    created_at: now(),
-    updated_at: now()
-  }]
-else
-  []]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
+      <db:update config-ref="Database_Config" doc:name="Update Transaction Dispute">
+        <db:sql><![CDATA[
+          UPDATE transactions
+          SET
+            dispute_status = 'Pending',
+            dispute_reason = :disputeReason,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = :transactionId::uuid
+          RETURNING *
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          transactionId: vars.transactionId,
+          disputeReason: payload.disputeReason default "Dispute created"
+        }]]]></db:input-parameters>
+      </db:update>
       <choice doc:name="Dispute Created?">
         <when expression="#[sizeOf(payload) > 0]">
           <ee:transform doc:name="Transform Response">
@@ -1039,9 +992,9 @@ output application/json
 var txn = payload[0]
 ---
 {
-  id: txn.id,
+  id: txn.id as String,
   transactionNumber: txn.transaction_number,
-  accountId: txn.account_id,
+  accountId: txn.account_id as String,
   transactionType: txn.transaction_type,
   amount: txn.amount,
   currency: txn.currency,
@@ -1052,7 +1005,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id,
+  relatedAccountId: txn.related_account_id as String,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
