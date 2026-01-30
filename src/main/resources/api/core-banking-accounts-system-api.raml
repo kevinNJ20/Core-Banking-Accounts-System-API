@@ -25,7 +25,17 @@ types:
           properties:
             customerId: string
             relationshipType: string
-      status?: string
+    example:
+      accountNumber: "ACC-123456789"
+      accountType: "Checking"
+      accountName: "Main Checking Account"
+      currency: "USD"
+      balance: 5000.00
+      availableBalance: 4800.00
+      owners:
+        - customerId: "c1c27e05-7e59-4f39-a7f6-7ffe9ee10d64"
+          relationshipType: "Primary"
+      status: "Active"
   FinancialTransaction:
     type: object
     properties:
@@ -38,6 +48,15 @@ types:
       transactionDate: datetime
       description?: string
       status?: string
+    example:
+      transactionNumber: "TXN-20260128-001"
+      accountId: "a289c8d1-9df9-48a8-8e45-4d5e2f573ee5"
+      transactionType: "Debit"
+      amount: 100.00
+      currency: "USD"
+      transactionDate: "2026-01-28T10:30:00Z"
+      description: "Purchase at Store XYZ"
+      status: "Posted"
   ErrorResponse:
     type: object
     properties:
@@ -46,6 +65,10 @@ types:
         properties:
           code: string
           message: string
+    example:
+      error:
+        code: "NOT_FOUND"
+        message: "Account not found"
 
 traits:
   hasQueryParam:
@@ -100,6 +123,17 @@ traits:
     body:
       application/json:
         type: FinancialAccount
+        example:
+          accountNumber: "ACC-123456789"
+          accountType: "Checking"
+          accountName: "Main Checking Account"
+          currency: "USD"
+          balance: 5000.00
+          availableBalance: 4800.00
+          status: "Active"
+          owners:
+            - customerId: "c1c27e05-7e59-4f39-a7f6-7ffe9ee10d64"
+              relationshipType: "Primary"
     responses:
       201:
         body:
@@ -133,6 +167,17 @@ traits:
       body:
         application/json:
           type: FinancialAccount
+          example:
+            accountNumber: "ACC-123456789"
+            accountType: "Checking"
+            accountName: "Main Checking Account"
+            currency: "USD"
+            balance: 5000.00
+            availableBalance: 4800.00
+            status: "Active"
+            owners:
+              - customerId: "c1c27e05-7e59-4f39-a7f6-7ffe9ee10d64"
+                relationshipType: "Primary"
       responses:
         200:
           body:
@@ -153,6 +198,15 @@ traits:
         body:
           application/json:
             type: FinancialTransaction
+            example:
+              transactionNumber: "TXN-20260128-001"
+              accountId: "a289c8d1-9df9-48a8-8e45-4d5e2f573ee5"
+              transactionType: "Debit"
+              amount: 100.00
+              currency: "USD"
+              transactionDate: "2026-01-28T10:30:00Z"
+              description: "Purchase at Store XYZ"
+              status: "Posted"
         responses:
           201:
             body:
@@ -176,6 +230,15 @@ traits:
     body:
       application/json:
         type: FinancialTransaction
+        example:
+          transactionNumber: "TXN-20260128-001"
+          accountId: "a289c8d1-9df9-48a8-8e45-4d5e2f573ee5"
+          transactionType: "Debit"
+          amount: 100.00
+          currency: "USD"
+          transactionDate: "2026-01-28T10:30:00Z"
+          description: "Purchase at Store XYZ"
+          status: "Posted"
     responses:
       200:
         body:
@@ -190,6 +253,8 @@ traits:
           type: object
           properties:
             disputeReason: string
+          example:
+            disputeReason: "Unauthorized transaction"
       responses:
         200:
           body:

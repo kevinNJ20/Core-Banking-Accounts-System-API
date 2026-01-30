@@ -11,7 +11,9 @@
                 <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
             </http:error-response>
         </http:listener>
+        <logger level="INFO" message="Main flow - Received request: #[attributes.method] #[attributes.requestPath] with payload: #[payload]" doc:name="Log Main Flow"/>
         <apikit:router doc:name="APIkit Router" doc:id="4664fc5b-187a-4ee3-ba48-17bf8ed95c01" config-ref="core-banking-accounts-system-api-config" />
+        <logger level="INFO" message="After APIkit Router - Payload: #[payload], httpStatus: #[vars.httpStatus]" doc:name="Log After Router"/>
         <error-handler>
             <on-error-propagate type="APIKIT:NOT_FOUND" enableNotifications="true" logException="true" doc:name="On Error Propagate">
                 <ee:transform doc:name="Transform Error Response">
@@ -121,6 +123,7 @@ output application/java
     </flow>
     <!-- POST /accounts -->
     <flow name="post:\accounts:application\json:core-banking-accounts-system-api-config">
+        <logger level="INFO" message="POST /accounts - Received request with payload: #[payload]" doc:name="Log APIkit Request"/>
         <flow-ref name="create-account-business-logic" doc:name="create-account-business-logic" />
     </flow>
     <!-- GET /accounts/{accountId} -->
@@ -130,6 +133,7 @@ output application/java
     </flow>
     <!-- PUT /accounts/{accountId} -->
     <flow name="put:\accounts\(accountId):application\json:core-banking-accounts-system-api-config">
+        <logger level="INFO" message="PUT /accounts/{accountId} - Received request with accountId: #[attributes.uriParams.accountId] and payload: #[payload]" doc:name="Log APIkit Request"/>
         <set-variable value="#[attributes.uriParams.accountId]" variableName="accountId" doc:name="Set Account ID" />
         <flow-ref name="update-account-business-logic" doc:name="update-account-business-logic" />
     </flow>

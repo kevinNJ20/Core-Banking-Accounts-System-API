@@ -13,21 +13,83 @@
   <!-- GET /accounts - Business Logic Flow -->
   <flow name="get-accounts-business-logic" doc:name="get-accounts-business-logic">
     <try doc:name="Try">
-      <db:select config-ref="Database_Config" doc:name="Select Accounts">
-        <db:sql><![CDATA[
-          SELECT DISTINCT a.*
-          FROM accounts a
-          LEFT JOIN account_owners ao ON a.id = ao.account_id
-          WHERE
-            (:customerId::uuid IS NULL OR ao.customer_id = :customerId::uuid)
-            AND (:accountNumber IS NULL OR a.account_number = :accountNumber)
-            AND (:accountType IS NULL OR a.account_type = :accountType)
-            AND (:status IS NULL OR a.status = :status)
-          ORDER BY a.created_at DESC
-          LIMIT :limit::integer OFFSET :offset::integer
-        ]]></db:sql>
-        <db:input-parameters><![CDATA[#[payload default {}]]]></db:input-parameters>
-      </db:select>
+      <ee:transform doc:name="Build Query Parameters">
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var params = payload default {}
+---
+{
+  customerId: if (params.customerId != null and params.customerId != "") params.customerId else null,
+  accountNumber: if (params.accountNumber != null and params.accountNumber != "") params.accountNumber else null,
+  accountType: if (params.accountType != null and params.accountType != "") params.accountType else null,
+  status: if (params.status != null and params.status != "") params.status else null,
+  limit: params.limit as Number default 100,
+  offset: params.offset as Number default 0
+}]]></ee:set-payload>
+        </ee:message>
+        <ee:variables>
+          <ee:set-variable variableName="queryParams"><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+        </ee:variables>
+      </ee:transform>
+      
+      <choice doc:name="Has Customer ID Filter?">
+        <when expression="#[vars.queryParams.customerId != null]">
+          <db:select config-ref="Database_Config" doc:name="Select Accounts with Customer Filter">
+            <db:sql><![CDATA[
+              SELECT DISTINCT a.*
+              FROM accounts a
+              INNER JOIN account_owners ao ON a.id = ao.account_id
+              WHERE ao.customer_id = :customerId::uuid
+                AND (COALESCE(:accountNumber, '') = '' OR a.account_number = :accountNumber)
+                AND (COALESCE(:accountType, '') = '' OR a.account_type = :accountType)
+                AND (COALESCE(:status, '') = '' OR a.status = :status)
+              ORDER BY a.created_at DESC
+              LIMIT :limit OFFSET :offset
+            ]]></db:sql>
+            <db:input-parameters><![CDATA[#[%dw 2.0
+output application/java
+var params = vars.queryParams
+---
+{
+  customerId: params.customerId,
+  accountNumber: params.accountNumber default "",
+  accountType: params.accountType default "",
+  status: params.status default "",
+  limit: params.limit,
+  offset: params.offset
+}]]]></db:input-parameters>
+          </db:select>
+        </when>
+        <otherwise>
+          <db:select config-ref="Database_Config" doc:name="Select Accounts without Customer Filter">
+            <db:sql><![CDATA[
+              SELECT DISTINCT a.*
+              FROM accounts a
+              WHERE
+                (COALESCE(:accountNumber, '') = '' OR a.account_number = :accountNumber)
+                AND (COALESCE(:accountType, '') = '' OR a.account_type = :accountType)
+                AND (COALESCE(:status, '') = '' OR a.status = :status)
+              ORDER BY a.created_at DESC
+              LIMIT :limit OFFSET :offset
+            ]]></db:sql>
+            <db:input-parameters><![CDATA[#[%dw 2.0
+output application/java
+var params = vars.queryParams
+---
+{
+  accountNumber: params.accountNumber default "",
+  accountType: params.accountType default "",
+  status: params.status default "",
+  limit: params.limit,
+  offset: params.offset
+}]]]></db:input-parameters>
+          </db:select>
+        </otherwise>
+      </choice>
 
       <ee:transform doc:name="Store Accounts">
         <ee:variables>
@@ -40,19 +102,43 @@ if (payload is Array) payload else [payload] default []]]></ee:set-variable>
 
       <choice doc:name="Has Accounts?">
         <when expression="#[sizeOf(vars.accounts) > 0]">
-          <db:select config-ref="Database_Config" doc:name="Select Account Owners">
-            <db:sql><![CDATA[
-              SELECT account_id, customer_id, relationship_type
-              FROM account_owners
-              WHERE account_id = ANY(:accountIds::uuid[])
-            ]]></db:sql>
-            <db:input-parameters><![CDATA[#[%dw 2.0
+          <ee:transform doc:name="Build Account IDs List">
+            <ee:variables>
+              <ee:set-variable variableName="accountIdsList"><![CDATA[%dw 2.0
 output application/java
 ---
-{
-  accountIds: vars.accounts map ((acc) -> acc.id)
-}]]]></db:input-parameters>
-          </db:select>
+vars.accounts map ((acc) -> acc.id)]]></ee:set-variable>
+            </ee:variables>
+          </ee:transform>
+          
+          <choice doc:name="Has Account IDs?">
+            <when expression="#[sizeOf(vars.accountIdsList) > 0]">
+              <foreach collection="#[vars.accountIdsList]" doc:name="For Each Account ID">
+                <db:select config-ref="Database_Config" doc:name="Select Account Owners">
+                  <db:sql><![CDATA[
+                    SELECT account_id, customer_id, relationship_type
+                    FROM account_owners
+                    WHERE account_id = :accountId::uuid
+                  ]]></db:sql>
+                  <db:input-parameters><![CDATA[#[{
+                    accountId: payload
+                  }]]]></db:input-parameters>
+                </db:select>
+                <ee:transform doc:name="Collect Owners">
+                  <ee:variables>
+                    <ee:set-variable variableName="owners"><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.owners == null) payload else vars.owners ++ payload]]></ee:set-variable>
+                  </ee:variables>
+                </ee:transform>
+              </foreach>
+              <set-payload value="#[vars.owners default []]" doc:name="Set Owners Payload"/>
+            </when>
+            <otherwise>
+              <set-payload value="#[[]]" doc:name="Set Empty Array"/>
+            </otherwise>
+          </choice>
         </when>
         <otherwise>
           <set-payload value="#[[]]" doc:name="Set Empty Array"/>
@@ -115,19 +201,35 @@ output application/json
 
   <!-- POST /accounts - Business Logic Flow -->
   <flow name="create-account-business-logic" doc:name="create-account-business-logic">
+    <logger level="INFO" message="Creating account with payload: #[payload]" doc:name="Log Request"/>
     <ee:transform doc:name="Transform Request to DB Format">
       <ee:message>
         <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+fun normalizeAccountType(at) = 
+  if (at == null) null
+  else if (at as String == "Checking" or at as String == "checking" or at as String == "CHECKING") "Checking"
+  else if (at as String == "Savings" or at as String == "savings" or at as String == "SAVINGS") "Savings"
+  else if (at as String == "MoneyMarket" or at as String == "moneymarket" or at as String == "MONEYMARKET") "MoneyMarket"
+  else if (at as String == "CertificateOfDeposit" or at as String == "certificateofdeposit" or at as String == "CERTIFICATEOFDEPOSIT") "CertificateOfDeposit"
+  else if (at as String == "Other" or at as String == "other" or at as String == "OTHER") "Other"
+  else at as String
+fun normalizeAccountStatus(s) = 
+  if (s == null) "Active"
+  else if (s as String == "Active" or s as String == "active" or s as String == "ACTIVE") "Active"
+  else if (s as String == "Inactive" or s as String == "inactive" or s as String == "INACTIVE") "Inactive"
+  else if (s as String == "Frozen" or s as String == "frozen" or s as String == "FROZEN") "Frozen"
+  else if (s as String == "Closed" or s as String == "closed" or s as String == "CLOSED") "Closed"
+  else s as String
 ---
 {
   account_number: payload.accountNumber,
-  account_type: payload.accountType,
+  account_type: normalizeAccountType(payload.accountType),
   account_name: payload.accountName default null,
   currency: payload.currency default "USD",
   balance: payload.balance default 0.00,
   available_balance: payload.availableBalance default payload.balance default 0.00,
-  status: payload.status default 'Active',
+  status: normalizeAccountStatus(payload.status),
   opened_date: payload.openedDate default null,
   closed_date: payload.closedDate default null,
   interest_rate: payload.interestRate default null
@@ -141,6 +243,8 @@ payload.owners default []]]></ee:set-variable>
       </ee:variables>
     </ee:transform>
 
+    <set-variable value="#[payload.account_number]" variableName="accountNumber" doc:name="Store Account Number" />
+
     <try doc:name="Try">
       <db:insert config-ref="Database_Config" doc:name="Insert Account">
         <db:sql><![CDATA[
@@ -152,23 +256,56 @@ payload.owners default []]]></ee:set-variable>
             :account_number, :account_type, :account_name, :currency,
             :balance, :available_balance, :status, :opened_date::date, :closed_date::date, :interest_rate
           )
-          RETURNING *
         ]]></db:sql>
         <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
       </db:insert>
 
-      <ee:transform doc:name="Store Account">
-        <ee:variables>
-          <ee:set-variable variableName="accountId"><![CDATA[%dw 2.0
+      <db:select config-ref="Database_Config" doc:name="Select Inserted Account">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM accounts
+          WHERE account_number = :accountNumber
+          ORDER BY created_at DESC
+          LIMIT 1
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          accountNumber: vars.accountNumber
+        }]]]></db:input-parameters>
+      </db:select>
+
+      <choice doc:name="Account Found?">
+        <when expression="#[sizeOf(payload) > 0]">
+          <ee:transform doc:name="Store Account">
+            <ee:variables>
+              <ee:set-variable variableName="accountId"><![CDATA[%dw 2.0
 output application/java
 ---
 payload[0].id]]></ee:set-variable>
-          <ee:set-variable variableName="account"><![CDATA[%dw 2.0
+              <ee:set-variable variableName="account"><![CDATA[%dw 2.0
 output application/java
 ---
 payload[0]]]></ee:set-variable>
-        </ee:variables>
-      </ee:transform>
+            </ee:variables>
+          </ee:transform>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "ACCOUNT_NOT_FOUND",
+    message: "Account was not created or could not be retrieved",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <set-variable value="500" doc:name="httpStatus" variableName="httpStatus"/>
+        </otherwise>
+      </choice>
 
       <choice doc:name="Has Owners?">
         <when expression="#[sizeOf(vars.owners) > 0]">
@@ -176,11 +313,17 @@ payload[0]]]></ee:set-variable>
             <ee:message>
               <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+fun normalizeRelationshipType(rt) = 
+  if (rt == null) "Primary"
+  else if (rt as String == "Primary" or rt as String == "primary" or rt as String == "PRIMARY") "Primary"
+  else if (rt as String == "Joint" or rt as String == "joint" or rt as String == "JOINT") "Joint"
+  else if (rt as String == "Beneficiary" or rt as String == "beneficiary" or rt as String == "BENEFICIARY") "Beneficiary"
+  else rt as String
 ---
 vars.owners map ((owner) -> {
   account_id: vars.accountId,
   customer_id: owner.customerId,
-  relationship_type: owner.relationshipType default "Primary"
+  relationship_type: normalizeRelationshipType(owner.relationshipType)
 })]]></ee:set-payload>
             </ee:message>
           </ee:transform>
@@ -196,7 +339,6 @@ vars.owners map ((owner) -> {
                 )
                 ON CONFLICT (account_id, customer_id) DO UPDATE SET
                   relationship_type = EXCLUDED.relationship_type
-                RETURNING *
               ]]></db:sql>
               <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
             </db:insert>
@@ -204,23 +346,45 @@ vars.owners map ((owner) -> {
         </when>
       </choice>
 
-      <db:select config-ref="Database_Config" doc:name="Get Owners">
-        <db:sql><![CDATA[
-          SELECT customer_id, relationship_type
-          FROM account_owners
-          WHERE account_id = :accountId::uuid
-        ]]></db:sql>
-        <db:input-parameters><![CDATA[#[{
-          accountId: vars.accountId
-        }]]]></db:input-parameters>
-      </db:select>
+      <choice doc:name="Has Account ID?">
+        <when expression="#[vars.accountId != null]">
+          <db:select config-ref="Database_Config" doc:name="Get Account and Owners">
+            <db:sql><![CDATA[
+              SELECT
+                a.id, a.account_number, a.account_type, a.account_name,
+                a.currency, a.balance, a.available_balance, a.status, a.opened_date,
+                a.closed_date, a.interest_rate, a.created_at, a.updated_at,
+                COALESCE(
+                  json_agg(json_build_object('customer_id', ao.customer_id, 'relationship_type', ao.relationship_type)) 
+                  FILTER (WHERE ao.customer_id IS NOT NULL),
+                  '[]'::json
+                ) AS owners
+              FROM accounts a
+              LEFT JOIN account_owners ao ON a.id = ao.account_id
+              WHERE a.id = :accountId::uuid
+              GROUP BY a.id, a.account_number, a.account_type, a.account_name,
+                a.currency, a.balance, a.available_balance, a.status, a.opened_date,
+                a.closed_date, a.interest_rate, a.created_at, a.updated_at
+            ]]></db:sql>
+            <db:input-parameters><![CDATA[#[{
+              accountId: vars.accountId
+            }]]]></db:input-parameters>
+          </db:select>
 
-      <ee:transform doc:name="Transform Response">
-        <ee:message>
-          <ee:set-payload><![CDATA[%dw 2.0
+          <choice doc:name="Account Retrieved?">
+            <when expression="#[sizeOf(payload) > 0]">
+              <ee:transform doc:name="Transform Response">
+                <ee:message>
+                  <ee:set-payload><![CDATA[%dw 2.0
 output application/json
-var account = vars.account
-var owners = payload
+var result = payload[0] default {}
+var account = result default {}
+var ownersRaw = result.owners default null
+var owners = if (ownersRaw == null) 
+   []
+  else if (ownersRaw is Array) 
+     ownersRaw 
+  else []
 ---
 {
   id: account.id as String,
@@ -237,14 +401,51 @@ var owners = payload
   owners: owners map ((owner) -> {
     customerId: owner.customer_id as String,
     relationshipType: owner.relationship_type
-  }),
+  }) default [],
   createdAt: account.created_at,
   updatedAt: account.updated_at
 }]]></ee:set-payload>
-        </ee:message>
-      </ee:transform>
-
-      <set-variable value="201" doc:name="httpStatus" doc:id="94fe90a1-bf1a-4e70-8d3b-00f44171e627" variableName="httpStatus"/>
+                </ee:message>
+              </ee:transform>
+              <set-variable value="201" doc:name="Set HTTP Status 201" variableName="httpStatus"/>
+            </when>
+            <otherwise>
+              <ee:transform doc:name="Error Response">
+                <ee:message>
+                  <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "ACCOUNT_NOT_FOUND",
+    message: "Account could not be retrieved after creation",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+                </ee:message>
+              </ee:transform>
+              <set-variable value="500" doc:name="httpStatus" variableName="httpStatus"/>
+            </otherwise>
+          </choice>
+        </when>
+        <otherwise>
+          <ee:transform doc:name="Error Response - No Account ID">
+            <ee:message>
+              <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: {
+    code: "ACCOUNT_CREATION_FAILED",
+    message: "Account ID was not set after creation",
+    timestamp: now()
+  }
+}]]></ee:set-payload>
+            </ee:message>
+          </ee:transform>
+          <set-variable value="500" doc:name="httpStatus" variableName="httpStatus"/>
+        </otherwise>
+      </choice>
       
       <error-handler>
         <on-error-propagate type="*" enableNotifications="true" logException="true" doc:name="Error Handler">
@@ -379,6 +580,7 @@ output application/json
 
   <!-- PUT /accounts/{accountId} - Business Logic Flow -->
   <flow name="update-account-business-logic" doc:name="update-account-business-logic">
+    <logger level="INFO" message="Updating account with accountId: #[vars.accountId] and payload: #[payload]" doc:name="Log Request"/>
     <ee:transform doc:name="Transform Request to DB Format">
       <ee:message>
         <ee:set-payload><![CDATA[%dw 2.0
@@ -420,10 +622,20 @@ output application/java
             interest_rate = COALESCE(:interest_rate, interest_rate),
             updated_at = CURRENT_TIMESTAMP
           WHERE id = :accountId::uuid
-          RETURNING *
         ]]></db:sql>
         <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
       </db:update>
+
+      <db:select config-ref="Database_Config" doc:name="Select Updated Account">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM accounts
+          WHERE id = :accountId::uuid
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          accountId: vars.accountId
+        }]]]></db:input-parameters>
+      </db:select>
 
       <choice doc:name="Update Successful?">
         <when expression="#[sizeOf(payload) > 0]">
@@ -453,11 +665,17 @@ payload[0]]]></ee:set-variable>
                 <ee:message>
                   <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+fun normalizeRelationshipType(rt) = 
+  if (rt == null) "Primary"
+  else if (rt as String == "Primary" or rt as String == "primary" or rt as String == "PRIMARY") "Primary"
+  else if (rt as String == "Joint" or rt as String == "joint" or rt as String == "JOINT") "Joint"
+  else if (rt as String == "Beneficiary" or rt as String == "beneficiary" or rt as String == "BENEFICIARY") "Beneficiary"
+  else rt as String
 ---
 vars.owners map ((owner) -> {
   account_id: vars.accountId,
   customer_id: owner.customerId,
-  relationship_type: owner.relationshipType default "Primary"
+  relationship_type: normalizeRelationshipType(owner.relationshipType)
 })]]></ee:set-payload>
                 </ee:message>
               </ee:transform>
@@ -473,7 +691,6 @@ vars.owners map ((owner) -> {
                     )
                     ON CONFLICT (account_id, customer_id) DO UPDATE SET
                       relationship_type = EXCLUDED.relationship_type
-                    RETURNING *
                   ]]></db:sql>
                   <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
                 </db:insert>
@@ -574,10 +791,10 @@ output application/java
 ---
 {
   accountId: vars.accountId,
-  startDate: attributes.queryParams.startDate default null,
-  endDate: attributes.queryParams.endDate default null,
-  transactionType: attributes.queryParams.transactionType default null,
-  status: attributes.queryParams.status default null,
+  startDate: if (attributes.queryParams.startDate != null and attributes.queryParams.startDate != "") attributes.queryParams.startDate as String else "",
+  endDate: if (attributes.queryParams.endDate != null and attributes.queryParams.endDate != "") attributes.queryParams.endDate as String else "",
+  transactionType: if (attributes.queryParams.transactionType != null and attributes.queryParams.transactionType != "") attributes.queryParams.transactionType as String else "",
+  status: if (attributes.queryParams.status != null and attributes.queryParams.status != "") attributes.queryParams.status as String else "",
   limit: (attributes.queryParams.limit as Number default 100) as String,
   offset: (attributes.queryParams.offset as Number default 0) as String
 }]]></ee:set-payload>
@@ -589,13 +806,13 @@ output application/java
         <db:sql><![CDATA[
           SELECT *
           FROM transactions
-          WHERE account_id = :accountId::uuid
-            AND (:startDate::date IS NULL OR transaction_date >= :startDate::date)
-            AND (:endDate::date IS NULL OR transaction_date <= :endDate::date)
-            AND (:transactionType IS NULL OR transaction_type = :transactionType)
-            AND (:status IS NULL OR status = :status)
+          WHERE account_id = CAST(:accountId AS uuid)
+            AND CASE WHEN :startDate = '' THEN true ELSE transaction_date >= TO_DATE(:startDate, 'YYYY-MM-DD') END
+            AND CASE WHEN :endDate = '' THEN true ELSE transaction_date <= TO_DATE(:endDate, 'YYYY-MM-DD') END
+            AND (:transactionType = '' OR transaction_type = :transactionType)
+            AND (:status = '' OR status = :status)
           ORDER BY transaction_date DESC
-          LIMIT :limit::integer OFFSET :offset::integer
+          LIMIT CAST(COALESCE(:limit, '100') AS integer) OFFSET CAST(COALESCE(:offset, '0') AS integer)
         ]]></db:sql>
         <db:input-parameters><![CDATA[#[payload default {}]]]></db:input-parameters>
       </db:select>
@@ -619,7 +836,7 @@ payload map ((txn) -> {
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id as String,
+  relatedAccountId: if (txn.related_account_id != null) txn.related_account_id as String else null,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -659,27 +876,61 @@ output application/json
       <ee:message>
         <ee:set-payload><![CDATA[%dw 2.0
 output application/java
+fun normalizeTransactionType(tt) = 
+  if (tt == null) null
+  else if (tt as String == "Debit" or tt as String == "debit" or tt as String == "DEBIT") "Debit"
+  else if (tt as String == "Credit" or tt as String == "credit" or tt as String == "CREDIT") "Credit"
+  else if (tt as String == "Transfer" or tt as String == "transfer" or tt as String == "TRANSFER") "Transfer"
+  else if (tt as String == "Fee" or tt as String == "fee" or tt as String == "FEE") "Fee"
+  else if (tt as String == "Interest" or tt as String == "interest" or tt as String == "INTEREST") "Interest"
+  else if (tt as String == "Reversal" or tt as String == "reversal" or tt as String == "REVERSAL") "Reversal"
+  else if (tt as String == "Dispute" or tt as String == "dispute" or tt as String == "DISPUTE") "Dispute"
+  else tt as String
+fun normalizeTransactionStatus(s) = 
+  if (s == null) "Posted"
+  else if (s as String == "Pending" or s as String == "pending" or s as String == "PENDING") "Pending"
+  else if (s as String == "Posted" or s as String == "posted" or s as String == "POSTED") "Posted"
+  else if (s as String == "Cleared" or s as String == "cleared" or s as String == "CLEARED") "Cleared"
+  else if (s as String == "Reversed" or s as String == "reversed" or s as String == "REVERSED") "Reversed"
+  else if (s as String == "Disputed" or s as String == "disputed" or s as String == "DISPUTED") "Disputed"
+  else if (s as String == "Resolved" or s as String == "resolved" or s as String == "RESOLVED") "Resolved"
+  else s as String
+fun normalizeDisputeStatus(ds) = 
+  if (ds == null) "None"
+  else if (ds as String == "None" or ds as String == "none" or ds as String == "NONE") "None"
+  else if (ds as String == "Initiated" or ds as String == "initiated" or ds as String == "INITIATED") "Initiated"
+  else if (ds as String == "UnderReview" or ds as String == "underreview" or ds as String == "UNDERREVIEW") "UnderReview"
+  else if (ds as String == "Resolved" or ds as String == "resolved" or ds as String == "RESOLVED") "Resolved"
+  else if (ds as String == "Rejected" or ds as String == "rejected" or ds as String == "REJECTED") "Rejected"
+  else ds as String
 ---
 {
   account_id: vars.accountId,
   transaction_number: payload.transactionNumber,
-  transaction_type: payload.transactionType,
+  transaction_type: normalizeTransactionType(payload.transactionType),
   amount: payload.amount,
   currency: payload.currency default "USD",
-  transaction_date: payload.transactionDate default now(),
-  value_date: payload.valueDate default null,
+  transaction_date: if (payload.transactionDate != null) 
+    ((payload.transactionDate as DateTime) as String {format: "yyyy-MM-dd HH:mm:ss.SSS"}) 
+    else (now() as String {format: "yyyy-MM-dd HH:mm:ss.SSS"}),
+  value_date: if (payload.valueDate != null) 
+    ((payload.valueDate as DateTime) as String {format: "yyyy-MM-dd"}) 
+    else "",
   description: payload.description default null,
   merchant_name: payload.merchantName default null,
   category: payload.category default null,
   check_number: payload.checkNumber default null,
   reference_number: payload.referenceNumber default null,
   related_account_id: payload.relatedAccountId default null,
-  status: payload.status default 'Posted',
-  dispute_status: payload.disputeStatus default 'None',
+  status: normalizeTransactionStatus(payload.status),
+  dispute_status: normalizeDisputeStatus(payload.disputeStatus),
   dispute_reason: payload.disputeReason default null
 }]]></ee:set-payload>
       </ee:message>
     </ee:transform>
+
+    <set-variable value="#[payload.transaction_number]" variableName="transactionNumber" doc:name="Store Transaction Number" />
+    <logger level="INFO" message="Transaction data - transaction_date: #[payload.transaction_date], value_date: '#[payload.value_date]' (type: #[typeOf(payload.value_date)])" doc:name="Log Transaction Data" />
 
     <try doc:name="Try">
       <db:insert config-ref="Database_Config" doc:name="Insert Transaction">
@@ -692,14 +943,31 @@ output application/java
           )
           VALUES (
             :transaction_number, :account_id::uuid, :transaction_type, :amount, :currency,
-            :transaction_date::timestamp, :value_date::date, :description, :merchant_name, :category,
+            TO_TIMESTAMP(:transaction_date, 'YYYY-MM-DD HH24:MI:SS.MS'), 
+            CASE 
+              WHEN :value_date = '' THEN CAST(NULL AS date)
+              ELSE TO_DATE(:value_date, 'YYYY-MM-DD')
+            END, 
+            :description, :merchant_name, :category,
             :check_number, :reference_number, :related_account_id::uuid, :status,
             :dispute_status, :dispute_reason
           )
-          RETURNING *
         ]]></db:sql>
         <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
       </db:insert>
+
+      <db:select config-ref="Database_Config" doc:name="Select Inserted Transaction">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM transactions
+          WHERE transaction_number = :transactionNumber
+          ORDER BY created_at DESC
+          LIMIT 1
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          transactionNumber: vars.transactionNumber
+        }]]]></db:input-parameters>
+      </db:select>
 
       <ee:transform doc:name="Transform Response">
         <ee:message>
@@ -721,7 +989,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id as String,
+  relatedAccountId: if (txn.related_account_id != null) txn.related_account_id as String else null,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -790,7 +1058,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id as String,
+  relatedAccountId: if (txn.related_account_id != null) txn.related_account_id as String else null,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -856,8 +1124,12 @@ output application/java
   transaction_type: payload.transactionType default null,
   amount: payload.amount default null,
   currency: payload.currency default null,
-  transaction_date: payload.transactionDate default null,
-  value_date: payload.valueDate default null,
+  transaction_date: if (payload.transactionDate != null) 
+    ((payload.transactionDate as DateTime) as String {format: "yyyy-MM-dd HH:mm:ss.SSS"}) 
+    else null,
+  value_date: if (payload.valueDate != null) 
+    ((payload.valueDate as DateTime) as String {format: "yyyy-MM-dd"}) 
+    else "",
   description: payload.description default null,
   merchant_name: payload.merchantName default null,
   category: payload.category default null,
@@ -879,8 +1151,8 @@ output application/java
             transaction_type = COALESCE(:transaction_type, transaction_type),
             amount = COALESCE(:amount, amount),
             currency = COALESCE(:currency, currency),
-            transaction_date = COALESCE(:transaction_date::timestamp, transaction_date),
-            value_date = COALESCE(:value_date::date, value_date),
+            transaction_date = COALESCE(TO_TIMESTAMP(:transaction_date, 'YYYY-MM-DD HH24:MI:SS.MS'), transaction_date),
+            value_date = COALESCE(NULLIF(:value_date, '')::date, value_date),
             description = COALESCE(:description, description),
             merchant_name = COALESCE(:merchant_name, merchant_name),
             category = COALESCE(:category, category),
@@ -892,10 +1164,21 @@ output application/java
             dispute_reason = COALESCE(:dispute_reason, dispute_reason),
             updated_at = CURRENT_TIMESTAMP
           WHERE id = :transactionId::uuid
-          RETURNING *
         ]]></db:sql>
         <db:input-parameters><![CDATA[#[payload]]]></db:input-parameters>
       </db:update>
+
+      <db:select config-ref="Database_Config" doc:name="Select Updated Transaction">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM transactions
+          WHERE id = :transactionId::uuid
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          transactionId: vars.transactionId
+        }]]]></db:input-parameters>
+      </db:select>
+
       <choice doc:name="Update Successful?">
         <when expression="#[sizeOf(payload) > 0]">
           <ee:transform doc:name="Transform Response">
@@ -918,7 +1201,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id as String,
+  relatedAccountId: if (txn.related_account_id != null) txn.related_account_id as String else null,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
@@ -979,17 +1262,28 @@ output application/json
         <db:sql><![CDATA[
           UPDATE transactions
           SET
-            dispute_status = 'Pending',
+            dispute_status = 'Initiated',
             dispute_reason = :disputeReason,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = :transactionId::uuid
-          RETURNING *
         ]]></db:sql>
         <db:input-parameters><![CDATA[#[{
           transactionId: vars.transactionId,
           disputeReason: payload.disputeReason default "Dispute created"
         }]]]></db:input-parameters>
       </db:update>
+
+      <db:select config-ref="Database_Config" doc:name="Select Updated Transaction">
+        <db:sql><![CDATA[
+          SELECT *
+          FROM transactions
+          WHERE id = :transactionId::uuid
+        ]]></db:sql>
+        <db:input-parameters><![CDATA[#[{
+          transactionId: vars.transactionId
+        }]]]></db:input-parameters>
+      </db:select>
+
       <choice doc:name="Dispute Created?">
         <when expression="#[sizeOf(payload) > 0]">
           <ee:transform doc:name="Transform Response">
@@ -1012,7 +1306,7 @@ var txn = payload[0]
   category: txn.category,
   checkNumber: txn.check_number,
   referenceNumber: txn.reference_number,
-  relatedAccountId: txn.related_account_id as String,
+  relatedAccountId: if (txn.related_account_id != null) txn.related_account_id as String else null,
   status: txn.status,
   disputeStatus: txn.dispute_status,
   disputeReason: txn.dispute_reason,
